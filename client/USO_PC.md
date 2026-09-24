@@ -47,6 +47,30 @@ con furigana + tarjeta + audio.
    (muestra coordenadas) o ajusta los 4 números a prueba y error.
 3. Formato: `x,y,ancho,alto` (ej. `"100,700,1700,300"`).
 
+## Backend local vs cloud
+
+Default: lo que diga el servidor (`OCR_BACKEND`, `tesseract` = offline).
+Override de un disparo:
+
+```powershell
+python shoot_once.py --backend groq
+```
+
+O pegajoso por env: `$env:RTJPN_BACKEND="groq"`.
+Con AHK: `Ctrl+Shift+J` = default, `Ctrl+Shift+G` = groq, `Ctrl+Shift+T` = local.
+
+## Botón 📸 de la tablet (listener)
+
+Para disparar capturas desde la tablet con el mando en mano:
+
+```powershell
+$env:PC_KEY="una-clave-larga"   # compartida con la Pi (PC_KEY)
+python shoot_listen.py          # escucha en :8120/capturar
+```
+
+La Pi lo llama vía `POST /api/disparar` (env `PC_LISTENER_URL` en la Pi).
+Deja esta ventana abierta mientras juegas (o AHK para hotkeys).
+
 ## Notas
 
 - Calidad JPG default 70 (`--q`): óptimo para el WiFi 2.4GHz de la Pi.

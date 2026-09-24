@@ -4,7 +4,7 @@ import io
 import os
 from functools import lru_cache
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
@@ -21,11 +21,17 @@ try:
 except ImportError:
     HAS_TESS = False
 
-app = FastAPI(title="RT-JPN-OCR Fase3")
+app = FastAPI(title="RT-JPN-OCR")
 OCR_LOCK = asyncio.Lock()
-OCR_BACKEND = os.getenv("OCR_BACKEND", "tesseract")
+OCR_BACKEND = os.getenv("OCR_BACKEND", "tesseract")  # default; override por ?backend=
+API_KEY = os.getenv("API_KEY", "")  # vacío = sin auth (dev); en prod definir
+GROQ_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+PC_URL = os.getenv("PC_LISTENER_URL", "http://192.168.1.100:8120/capturar")
+PC_KEY = os.getenv("PC_KEY", "")
 BASE = Path(__file__).parent
 LAST_RESULT: dict = {}
+_RATE: dict = {}  # ip -> [timestamps] rate-limit simple anti-spam LAN
 
 
 def gen_version() -> str:
@@ -43,6 +49,21 @@ def gen_version() -> str:
     except Exception:
         parts.append("jamdict-?")
     return "|".join(parts)
+
+
+def check_auth(key: str, request) -> None:
+    from fastapi import HTTPException
+    if API_KEY and key != API_KEY:
+        raise HTTPException(401, "bad key")
+    # rate-limit: 30 req/min por IP (evita que un vecino tumbe la Pi)
+    import time
+    ip = request.client.host if request.client else "?"
+    now = time.time()
+    lst = [t for t in _RATE.get(ip, []) if now - t < 60]
+    if len(lst) >= 30:
+        raise HTTPException(429, "rate limit")
+    lst.append(now)
+    _RATE[ip] = lst
 
 
 class Hub:
@@ -161,14 +182,42 @@ def ocr_tesseract(img: Image.Image, psm: int = 6) -> str:
         img, lang="jpn+jpn_vert", config=f"--oem 1 --psm {psm}").strip()
 
 
+GROQ_PROMPT = ("Transcribe ONLY the Japanese text visible in this videogame "
+               "screenshot. Output the transcription and nothing else, preserving "
+               "line breaks. Ignore small furigana readings above kanji, transcribe "
+               "only the main text. If no Japanese text is visible, output nothing.")
+
+
+async def ocr_groq(img: Image.Image) -> str:
+    """Backend cloud (Groq vision). La Pi envía el JPG ya recortado.
+    Sin GROQ_API_KEY -> 501, el modo local sigue andando."""
+    from fastapi import HTTPException
+    if not GROQ_KEY:
+        raise HTTPException(501, "modo groq sin GROQ_API_KEY en la Pi")
+    import base64
+    import httpx
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, "JPEG", quality=80)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    async with httpx.AsyncClient(timeout=60) as h:
+        r = await h.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_KEY}"},
+            json={"model": GROQ_MODEL, "temperature": 0, "max_tokens": 1024,
+                  "messages": [{"role": "user", "content": [
+                      {"type": "text", "text": GROQ_PROMPT},
+                      {"type": "image_url",
+                       "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}]})
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+
+
 def ocr_dispatch(img: Image.Image, psm: int = 6) -> str:
-    # Punto de intercambio futuro: RapidOCR-ONNX sin reescribir el resto
-    if OCR_BACKEND == "tesseract":
-        text = ocr_tesseract(img, psm)
-        if not text and psm != 5:  # fallback tategaki
-            text = ocr_tesseract(img, 5)
-        return text
-    raise ValueError(f"backend desconocido: {OCR_BACKEND}")
+    """Sync, solo tesseract (selftest + modo local). Groq es async aparte."""
+    text = ocr_tesseract(img, psm)
+    if not text and psm != 5:  # fallback tategaki
+        text = ocr_tesseract(img, 5)
+    return text
 
 
 def make_test_image(text: str = "日本語テスト") -> Image.Image:
@@ -192,7 +241,8 @@ def make_test_image(text: str = "日本語テスト") -> Image.Image:
 @app.get("/api/health")
 async def health():
     return {"ok": True, "cv2": HAS_CV2, "tesseract": HAS_TESS,
-            "backend": OCR_BACKEND, "gen": gen_version()}
+            "backend": OCR_BACKEND, "gen": gen_version(),
+            "groq": bool(GROQ_KEY), "auth": bool(API_KEY)}
 
 
 @app.get("/api/parse")
@@ -216,11 +266,15 @@ async def selftest():
 
 @app.post("/api/ocr")
 async def api_ocr(
+    request: Request,
     file: UploadFile = File(...),
     keep_furigana: bool = Query(False),
     psm: int = Query(6),
     roi: str = Query("", description="x,y,w,h en px sobre imagen original"),
+    backend: str = Query("", description="tesseract|groq (vacío=default)"),
+    key: str = Query(""),
 ):
+    check_auth(key, request)
     raw = await file.read()
     img = Image.open(io.BytesIO(raw)).convert("RGB")
     if roi:
@@ -229,15 +283,52 @@ async def api_ocr(
             img = img.crop((x, y, x + w, y + h))
         except Exception:
             pass
-    proc = preprocess(img, keep_furigana=keep_furigana)
-    async with OCR_LOCK:
-        text = await asyncio.to_thread(ocr_dispatch, proc, psm)
+    be = (backend or OCR_BACKEND).lower()
+    import time
+    t0 = time.time()
+    if be == "groq":
+        # Cloud: imagen original a color (NO binarizada), downscale si enorme
+        gimg = img.copy()
+        if max(gimg.size) > 1568:
+            gimg.thumbnail((1568, 1568), Image.LANCZOS)
+        async with OCR_LOCK:
+            text = await ocr_groq(gimg)
+    elif be == "tesseract":
+        proc = preprocess(img, keep_furigana=keep_furigana)
+        async with OCR_LOCK:
+            text = await asyncio.to_thread(ocr_dispatch, proc, psm)
+    else:
+        from fastapi import HTTPException
+        raise HTTPException(400, f"backend desconocido: {be} (tesseract|groq)")
+    ms = int((time.time() - t0) * 1000)
     toks = await asyncio.to_thread(tokenize, text) if text else []
-    res = {"text": text, "tokens": toks, "v": gen_version()}
+    res = {"text": text, "tokens": toks, "v": gen_version(),
+           "backend": be, "ms": ms}
     global LAST_RESULT
     LAST_RESULT = res
     await hub.broadcast(res)
     return res
+
+
+@app.post("/api/disparar")
+async def api_disparar(request: Request,
+                       backend: str = Query(""),
+                       key: str = Query("")):
+    """Proxy botón 📸 tablet -> listener PC (captura) -> vuelve por /api/ocr."""
+    from fastapi import HTTPException
+    check_auth(key, request)
+    import httpx
+    params = {}
+    if PC_KEY:
+        params["key"] = PC_KEY
+    if backend:
+        params["backend"] = backend
+    try:
+        async with httpx.AsyncClient(timeout=10) as h:
+            r = await h.post(PC_URL, params=params or None)
+        return {"ok": r.status_code == 200, "pc": r.text[:200]}
+    except Exception as e:
+        raise HTTPException(502, f"PC no alcanzable ({PC_URL}): {e}")
 
 
 @app.get("/api/last")

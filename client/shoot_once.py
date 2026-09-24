@@ -25,6 +25,8 @@ def main() -> int:
                     help="x,y,w,h en px (caja de diálogo). Vacío = pantalla principal.")
     ap.add_argument("--q", type=int, default=70, help="calidad JPG (red 2.4GHz Pi: 70)")
     ap.add_argument("--monitor", type=int, default=1)
+    ap.add_argument("--backend", default=os.getenv("RTJPN_BACKEND", ""),
+                    help="tesseract|groq (vacío=default servidor)")
     a = ap.parse_args()
 
     with mss.MSS() as sct:
@@ -38,6 +40,8 @@ def main() -> int:
     params = {}
     if a.key:
         params["key"] = a.key
+    if a.backend:
+        params["backend"] = a.backend
     try:
         r = requests.post(a.url, params=params or None,
                           files={"file": ("cap.jpg", buf.getvalue(), "image/jpeg")},
