@@ -1,9 +1,16 @@
-"""Fase 3: FastAPI + Otsu + furigana + OCR swappable + fugashi/jamdict + WS + frontend."""
+"""RT-JPN-OCR: FastAPI + Otsu + furigana + OCR dual + fugashi/jamdict + WS."""
 import asyncio
 import io
 import os
 from functools import lru_cache
 from pathlib import Path
+
+try:  # .env local (manual runs); systemd usa EnvironmentFile — ambos valen
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 from fastapi import FastAPI, UploadFile, File, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -24,6 +31,8 @@ except ImportError:
 app = FastAPI(title="RT-JPN-OCR")
 OCR_LOCK = asyncio.Lock()
 OCR_BACKEND = os.getenv("OCR_BACKEND", "tesseract")  # default; override por ?backend=
+OCR_PSM = int(os.getenv("OCR_PSM", "6"))  # 7 rinde mejor en diálogos de 1 línea
+OCR_UPSCALE = int(os.getenv("OCR_UPSCALE", "2"))  # 3 para texto chico en ROI
 API_KEY = os.getenv("API_KEY", "")  # vacío = sin auth (dev); en prod definir
 GROQ_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
@@ -139,6 +148,11 @@ def tokenize(text: str):
             lemma = w.feature.lemma or surf
         except Exception:
             lemma = surf
+        # unidic trae sufijos tipo "テスト-test": normaliza a forma base
+        if "-" in lemma:
+            head, tail = lemma.split("-", 1)
+            if head and tail.isascii():
+                lemma = head
         try:
             kana = w.feature.pron or w.feature.kana or surf
         except Exception:
@@ -158,10 +172,10 @@ def tokenize(text: str):
 
 
 def preprocess(img: Image.Image, keep_furigana: bool = False):
-    """gray -> 2x LANCZOS -> Otsu (+invert) -> OPEN para borrar furigana."""
+    """gray -> Nx LANCZOS -> Otsu (+invert) -> OPEN para borrar furigana."""
     g = ImageOps.grayscale(img)
     w, h = g.size
-    g = g.resize((w * 2, h * 2), Image.LANCZOS)
+    g = g.resize((w * OCR_UPSCALE, h * OCR_UPSCALE), Image.LANCZOS)
     if not HAS_CV2:
         return ImageOps.autocontrast(g, cutoff=1)
     arr = np.array(g)
@@ -196,20 +210,26 @@ async def ocr_groq(img: Image.Image) -> str:
         raise HTTPException(501, "modo groq sin GROQ_API_KEY en la Pi")
     import base64
     import httpx
+    from fastapi import HTTPException
     buf = io.BytesIO()
     img.convert("RGB").save(buf, "JPEG", quality=80)
     b64 = base64.b64encode(buf.getvalue()).decode()
-    async with httpx.AsyncClient(timeout=60) as h:
-        r = await h.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROQ_KEY}"},
-            json={"model": GROQ_MODEL, "temperature": 0, "max_tokens": 1024,
-                  "messages": [{"role": "user", "content": [
-                      {"type": "text", "text": GROQ_PROMPT},
-                      {"type": "image_url",
-                       "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}]})
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"].strip()
+    try:
+        async with httpx.AsyncClient(timeout=60) as h:
+            r = await h.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_KEY}"},
+                json={"model": GROQ_MODEL, "temperature": 0, "max_tokens": 1024,
+                      "messages": [{"role": "user", "content": [
+                          {"type": "text", "text": GROQ_PROMPT},
+                          {"type": "image_url",
+                           "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}]})
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"].strip()
+    except httpx.HTTPStatusError as e:
+        # 404 = model ID no disponible para la key; 401 = key inválida...
+        detail = e.response.text[:300]
+        raise HTTPException(502, f"groq {e.response.status_code}: {detail}")
 
 
 def ocr_dispatch(img: Image.Image, psm: int = 6) -> str:
@@ -284,6 +304,7 @@ async def api_ocr(
         except Exception:
             pass
     be = (backend or OCR_BACKEND).lower()
+    psm = psm if psm != 6 else OCR_PSM  # ?psm= explícito gana, si no env
     import time
     t0 = time.time()
     if be == "groq":
@@ -300,10 +321,14 @@ async def api_ocr(
     else:
         from fastapi import HTTPException
         raise HTTPException(400, f"backend desconocido: {be} (tesseract|groq)")
-    ms = int((time.time() - t0) * 1000)
+    ocr_ms = int((time.time() - t0) * 1000)
+    t1 = time.time()
     toks = await asyncio.to_thread(tokenize, text) if text else []
+    dict_ms = int((time.time() - t1) * 1000)
     res = {"text": text, "tokens": toks, "v": gen_version(),
-           "backend": be, "ms": ms}
+           "backend": be, "ms": ocr_ms + dict_ms,
+           "ocr_ms": ocr_ms, "dict_ms": dict_ms,
+           "psm": psm if be == "tesseract" else None}
     global LAST_RESULT
     LAST_RESULT = res
     await hub.broadcast(res)

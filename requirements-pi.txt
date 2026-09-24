@@ -1,8 +1,9 @@
-# Pi 3B+ — cv2 por apt, NO por pip (ver PLAN Fase 0)
-# sudo apt install tesseract-ocr tesseract-ocr-jpn fonts-noto-cjk python3-pip python3-opencv
+# Pi: usar venv --system-site-packages (PEP 668) + apt python3-opencv
+# sudo apt install python3-full python3-venv python3-opencv tesseract-ocr tesseract-ocr-jpn fonts-noto-cjk
 fastapi
 uvicorn[standard]
 python-multipart
+python-dotenv
 pillow
 pytesseract
 numpy

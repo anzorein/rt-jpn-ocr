@@ -152,8 +152,11 @@ function render(d,entry){
     if(t.reading&&t.reading!==t.surface){
       const rt=document.createElement("rt");rt.textContent=t.reading;r.appendChild(rt);}
     r.onclick=()=>show(i);$("sent").appendChild(r);});
-  $("st").textContent=(d.text?d.text.slice(0,50):"sin texto")+
-    (d.backend?(d.backend==="groq"?" [G]":" [T]"):"");
+  $("st").textContent=(d.text?d.text.slice(0,44):"sin texto")+
+    (d.backend?(d.backend==="groq"?" [G]":" [T]"):"")+
+    (d.ms!=null?` ${d.ms}ms`:"");
+  $("cnt").textContent=(d.ocr_ms!=null?`ocr ${d.ocr_ms} + dict ${d.dict_ms}ms`:"")+
+    (d.psm?` · psm${d.psm}`:"");
 }
 function show(i){
   const t=TOKS[i];if(!t)return;CUR=t;
