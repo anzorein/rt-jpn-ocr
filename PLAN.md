@@ -61,7 +61,7 @@ Cliente Win: AHK v2 trigger + shoot_once.py (reemplaza keyboard/pygame residente
 - [ ] Fase 1 en Pi (requiere tesseract-ocr-jpn para `selftest.ok=true`)
 - [x] Fase 2 código (fugashi singletons + lru_cache + /api/parse, verificado: 6 tokens con hiragana, jamdict fallback sin crash sin DB)
 - [ ] Fase 2 en Pi (requiere `pip install -r requirements-pi.txt` con jamdict-data para glosses EN)
-- [x] Fase 3 código (WS /ws + broadcast + /api/last + static/index.html ruby/audio/historial/wake-lock/atribución, verificado: index 5KB, WS conecta, sin romaji)
+- [x] Fase 3 código (WS /ws + broadcast + /api/last + static/index.html ruby/audio + IndexedDB 100MB caché full + ↻ regenerar + genVersion + ⭐ anti-borrado + orden fecha/fav + chips fecha/hora; verificado: gen en /health, WS conecta, sin romaji)
 - [ ] Fase 4
 - [ ] Fase 5
 - [ ] Fase 6

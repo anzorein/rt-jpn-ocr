@@ -28,6 +28,23 @@ BASE = Path(__file__).parent
 LAST_RESULT: dict = {}
 
 
+def gen_version() -> str:
+    """Versión del generador (tokenizer+dict). El frontend marca
+    entradas viejas como '↻ regenerable' si difiere."""
+    parts = [OCR_BACKEND]
+    try:
+        import unidic_lite
+        parts.append("unidic-lite-" + getattr(unidic_lite, "version", "?"))
+    except Exception:
+        parts.append("unidic-lite-?")
+    try:
+        import jamdict
+        parts.append("jamdict-" + getattr(jamdict, "__version__", "?"))
+    except Exception:
+        parts.append("jamdict-?")
+    return "|".join(parts)
+
+
 class Hub:
     def __init__(self):
         self.clients: set = set()
@@ -175,14 +192,15 @@ def make_test_image(text: str = "日本語テスト") -> Image.Image:
 @app.get("/api/health")
 async def health():
     return {"ok": True, "cv2": HAS_CV2, "tesseract": HAS_TESS,
-            "backend": OCR_BACKEND}
+            "backend": OCR_BACKEND, "gen": gen_version()}
 
 
 @app.get("/api/parse")
 async def api_parse(text: str = Query(..., min_length=1, max_length=500)):
-    """Tokeniza + diccionario sin OCR (útil para test sin tesseract)."""
+    """Tokeniza + diccionario sin OCR (útil para test sin tesseract).
+    También usado por el botón ↻ regenerar del frontend."""
     toks = await asyncio.to_thread(tokenize, text)
-    return {"text": text, "tokens": toks}
+    return {"text": text, "tokens": toks, "v": gen_version()}
 
 
 @app.get("/api/selftest")
@@ -215,7 +233,7 @@ async def api_ocr(
     async with OCR_LOCK:
         text = await asyncio.to_thread(ocr_dispatch, proc, psm)
     toks = await asyncio.to_thread(tokenize, text) if text else []
-    res = {"text": text, "tokens": toks}
+    res = {"text": text, "tokens": toks, "v": gen_version()}
     global LAST_RESULT
     LAST_RESULT = res
     await hub.broadcast(res)

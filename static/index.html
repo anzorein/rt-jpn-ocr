@@ -13,12 +13,22 @@ body{margin:0;background:#111;color:#eee;font-family:sans-serif;-webkit-tap-high
 #dot.ok{background:#0f0}
 #st{font-size:.85rem;color:#aaa;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #bar button{background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:8px 10px;font-size:1rem}
+#histbar{display:none;gap:6px;padding:8px 12px;background:#0a0a0a;flex-wrap:wrap;align-items:center}
+#histbar.on{display:flex}
+#histbar button{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:8px;padding:6px 8px;font-size:.8rem}
+#histbar button.act{background:#333;color:#fff;border-color:#8ab4ff}
+#hist{display:none;gap:6px;padding:0 12px 12px;flex-wrap:wrap}
+#hist.on{display:flex}
+.chip{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:8px;padding:6px 8px;font-size:.8rem;max-width:46vw;display:flex;gap:6px;align-items:center}
+.chip .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.chip .dt{color:#8ab4ff;flex:none}
+.chip .stale{color:#fa0;flex:none}
+.chip button{background:none;border:0;color:#888;font-size:.9rem;padding:0 2px}
+.chip button.fav-on{color:#fd0}
 #sent{font-size:2rem;line-height:2.8rem;padding:18px;word-break:break-all;min-height:40vh}
 ruby{cursor:pointer;border-bottom:1px solid #444;padding:0 1px}
 ruby:hover{background:#222}
 rt{font-size:.9rem;color:#8ab4ff}
-#hist{display:flex;gap:6px;padding:0 12px 12px;flex-wrap:wrap}
-#hist button{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:8px;padding:6px 8px;font-size:.8rem;max-width:45vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #card{position:fixed;left:8px;right:8px;bottom:8px;background:#1e1e1e;border:1px solid #444;border-radius:12px;padding:14px;display:none;max-height:55vh;overflow:auto;box-shadow:0 8px 30px #000;z-index:10}
 #card h2{margin:0;font-size:1.6rem}
 #card .rd{color:#8ab4ff;margin:4px 0;font-size:1.2rem}
@@ -31,76 +41,172 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 <body>
 <div id="bar"><div id="dot"></div><span id="st">conectando…</span>
 <button id="b-say" title="Leer oración">🔊</button>
+<button id="b-regen" title="Regenerar análisis">↻</button>
 <button id="b-hist" title="Historial">🕘</button>
 </div>
-<div id="hist" style="display:none"></div>
+<div id="histbar">
+<button id="s-desc" class="act">Fecha ↓</button>
+<button id="s-asc">Fecha ↑</button>
+<button id="s-fav">⭐ Solo fav</button>
+<button id="s-clear" style="margin-left:auto">🗑 Todo</button>
+</div>
+<div id="hist"></div>
 <div id="sent">Esperando captura… (PC: hotkey, o foto al bot)</div>
 <div id="card"><div class="row"><button id="c-say">🔊</button><h2 id="c-w"></h2>
+<button id="c-fav" title="Favorita">☆</button>
 <button id="c-x" style="margin-left:auto">✕</button></div>
 <div class="rd" id="c-r"></div><ol id="c-g"></ol></div>
 <footer>Dictionary data: JMdict/EDRDG © CC BY-SA — <span id="cnt"></span></footer>
 <script>
-let TOKS=[], CUR=null, HIST=[];
-try{HIST=JSON.parse(localStorage.getItem("rtjpn")||"[]")}catch(e){HIST=[]}
+/* Store: IndexedDB 100MB, caché full {id,ts,text,result,v,fav}.
+   Eviction LRU que salta favoritas. Política aislada en evict() para
+   cambiarla sin tocar la UI. */
+const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024;
+let TOKS=[], CUR=null, CUR_ENTRY=null, GEN=null;
+let pref={sort:"desc",favOnly:false};
+try{Object.assign(pref,JSON.parse(localStorage.getItem("rtjpn-pref")||"{}"))}catch(e){}
 const $=id=>document.getElementById(id);
 const wsProto=location.protocol==="https:"?"wss":"ws";
-function say(t){try{
-  speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(t); u.lang="ja-JP"; u.rate=0.9;
+function savePref(){try{localStorage.setItem("rtjpn-pref",JSON.stringify(pref))}catch(e){}}
+function say(t){try{speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(t);u.lang="ja-JP";u.rate=0.9;
   speechSynthesis.speak(u);}catch(e){}}
+function fmtDT(ts){const d=new Date(ts);
+  return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")+" "+
+    String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0");}
+/* ---- IndexedDB ---- */
+let _db=null;
+function db(){return new Promise((res,rej)=>{
+  if(_db)return res(_db);
+  const rq=indexedDB.open(DB,1);
+  rq.onupgradeneeded=e=>{const d=e.target.result;
+    const s=d.createObjectStore("history",{keyPath:"id"});
+    s.createIndex("ts","ts",{unique:false});s.createIndex("fav","fav",{unique:false});};
+  rq.onsuccess=e=>{_db=e.target.result;res(_db);};
+  rq.onerror=e=>rej(e);});}
+function tx(mode,fn){return db().then(d=>new Promise((res,rej)=>{
+  const t=d.transaction("history",mode),s=t.objectStore("history"),rq=fn(s);
+  t.oncomplete=()=>res(rq&&rq.result);t.onerror=e=>rej(e);}));}
+async function evict(){
+  // LRU: borra no-favoritas más viejas hasta quedar bajo cuota.
+  // Si todo es favorito, no borra y avisa.
+  let usage=0; try{const e=await navigator.storage.estimate();usage=e.usage||0;}catch(err){}
+  if(usage<MAX_BYTES)return;
+  const all=await tx("readonly",s=>s.index("ts").getAll());
+  let freed=false;
+  for(const r of all){ // ts asc: viejas primero
+    if(r.fav)continue;
+    try{const sz=JSON.stringify(r).length;}catch(e){}
+    await tx("readwrite",s=>s.delete(r.id)); freed=true;
+    try{const e2=await navigator.storage.estimate();if((e2.usage||0)<MAX_BYTES)break;}catch(e2){break;}
+  }
+  if(!freed)$("st").textContent="historial lleno (todo favorito)";
+}
+async function saveEntry(text,tokens,v){
+  const e={id:Date.now()+""+Math.floor(Math.random()*1e4),ts:Date.now(),
+    text,tokens,v:v||null,fav:false};
+  await tx("readwrite",s=>s.add(e));
+  try{await evict()}catch(err){}
+  CUR_ENTRY=e; return e;
+}
+async function listEntries(){
+  let all=await tx("readonly",s=>s.index("ts").getAll());
+  if(pref.favOnly)all=all.filter(r=>r.fav);
+  all.sort((a,b)=>pref.sort==="asc"?a.ts-b.ts:b.ts-a.ts);
+  return all;
+}
+/* ---- render ---- */
+function render(d,entry){
+  if(!d||!d.tokens)return;
+  TOKS=d.tokens; GEN=d.v||GEN;
+  if(entry)CUR_ENTRY=entry;
+  $("sent").innerHTML="";
+  TOKS.forEach((t,i)=>{const r=document.createElement("ruby");
+    r.textContent=t.surface;
+    if(t.reading&&t.reading!==t.surface){
+      const rt=document.createElement("rt");rt.textContent=t.reading;r.appendChild(rt);}
+    r.onclick=()=>show(i);$("sent").appendChild(r);});
+  $("st").textContent=d.text?d.text.slice(0,60):"sin texto";
+}
+function show(i){
+  const t=TOKS[i];if(!t)return;CUR=t;
+  $("c-w").textContent=t.lemma||t.surface;
+  $("c-r").textContent=t.reading||"";
+  $("c-g").innerHTML=(t.glosses&&t.glosses.length?t.glosses:["—"])
+    .map(g=>`<li>${String(g).replace(/</g,"&lt;")}</li>`).join("");
+  paintFav();
+  $("card").style.display="block";
+}
+function paintFav(){$("c-fav").textContent=(CUR_ENTRY&&CUR_ENTRY.fav)?"★":"☆";}
+async function drawHist(){
+  const h=$("hist");h.innerHTML="";
+  let all=[];try{all=await listEntries()}catch(e){return;}
+  all.slice(0,200).forEach(r=>{
+    const c=document.createElement("div");c.className="chip";
+    const stale=GEN&&r.v&&r.v!==GEN;
+    c.innerHTML=`<span class="dt">${fmtDT(r.ts)}</span>`+
+      (stale?`<span class="stale" title="generador cambiado">↻</span>`:"")+
+      `<span class="t">${String(r.text).slice(0,30).replace(/</g,"&lt;")}</span>`;
+    const bf=document.createElement("button");
+    bf.textContent=r.fav?"★":"☆";if(r.fav)bf.className="fav-on";
+    bf.title="favorita (anti-borrado)";bf.onclick=async ev=>{ev.stopPropagation();
+      r.fav=!r.fav;await tx("readwrite",s=>s.put(r));
+      if(CUR_ENTRY&&CUR_ENTRY.id===r.id)CUR_ENTRY.fav=r.fav;
+      paintFav();drawHist();};
+    const bd=document.createElement("button");bd.textContent="✕";bd.title="borrar";
+    bd.onclick=async ev=>{ev.stopPropagation();
+      if(r.fav){alert("Quita la estrella primero");return;}
+      await tx("readwrite",s=>s.delete(r.id));drawHist();};
+    // tap en el chip = recupera caché exacto, offline, sin servidor
+    c.onclick=()=>render({text:r.text,tokens:r.tokens,v:r.v},r);
+    c.appendChild(bf);c.appendChild(bd);h.appendChild(c);});
+  $("s-desc").className=pref.sort==="desc"?"act":"";
+  $("s-asc").className=pref.sort==="asc"?"act":"";
+  $("s-fav").className=pref.favOnly?"act":"";
+}
+async function onLive(d){
+  if(!d||!d.tokens||!d.text)return;
+  render(d);
+  try{await saveEntry(d.text,d.tokens,d.v);drawHist();}catch(e){}
+}
+$("c-x").onclick=()=>$("card").style.display="none";
+$("c-say").onclick=()=>{if(CUR)say(CUR.surface)};
+$("c-fav").onclick=async()=>{
+  if(!CUR_ENTRY)return;
+  CUR_ENTRY.fav=!CUR_ENTRY.fav;
+  try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}
+  paintFav();drawHist();};
+$("b-say").onclick=()=>{if(TOKS.length)say(TOKS.map(t=>t.surface).join(""))};
+$("b-regen").onclick=()=>{ // ↻ regenera análisis actual con el generador nuevo
+  const txt=CUR_ENTRY?CUR_ENTRY.text:(TOKS.length?TOKS.map(t=>t.surface).join(""):"");
+  if(!txt)return;
+  fetch(`/api/parse?text=${encodeURIComponent(txt)}`).then(r=>r.json()).then(async d=>{
+    render(d);GEN=d.v||GEN;
+    if(CUR_ENTRY){CUR_ENTRY.text=d.text;CUR_ENTRY.tokens=d.tokens;CUR_ENTRY.v=d.v;
+      try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
+    else{try{await saveEntry(d.text,d.tokens,d.v)}catch(e){}}
+    drawHist();}).catch(()=>{});};
+$("b-hist").onclick=()=>{const on=$("hist").classList.toggle("on");
+  $("histbar").classList.toggle("on",on);if(on)drawHist();};
+$("s-desc").onclick=()=>{pref.sort="desc";savePref();drawHist();};
+$("s-asc").onclick=()=>{pref.sort="asc";savePref();drawHist();};
+$("s-fav").onclick=()=>{pref.favOnly=!pref.favOnly;savePref();drawHist();};
+$("s-clear").onclick=async()=>{ // salta favoritas
+  const all=await tx("readonly",s=>s.getAll());
+  for(const r of all){if(!r.fav)await tx("readwrite",s=>s.delete(r.id));}
+  drawHist();};
+/* ---- WS ---- */
 function conn(){
   const ws=new WebSocket(`${wsProto}://${location.host}/ws`);
   ws.onopen=()=>{$("dot").className="ok";$("st").textContent="conectado";$("cnt").textContent="en vivo";};
   ws.onclose=()=>{$("dot").className="";$("st").textContent="reconectando…";setTimeout(conn,2000);};
   ws.onerror=()=>{try{ws.close()}catch(e){}};
-  ws.onmessage=e=>{try{render(JSON.parse(e.data))}catch(err){}};
-  window._ws=ws;
+  ws.onmessage=e=>{try{onLive(JSON.parse(e.data))}catch(err){}};
 }
-function render(d){
-  if(!d||!d.tokens)return;
-  TOKS=d.tokens; $("sent").innerHTML="";
-  TOKS.forEach((t,i)=>{
-    const r=document.createElement("ruby"); r.textContent=t.surface;
-    if(t.reading&&t.reading!==t.surface){
-      const rt=document.createElement("rt"); rt.textContent=t.reading; r.appendChild(rt);
-    }
-    r.onclick=()=>show(i); $("sent").appendChild(r);
-  });
-  $("st").textContent=d.text?d.text.slice(0,60):"sin texto";
-  pushHist(d.text);
-}
-function pushHist(text){
-  if(!text)return;
-  HIST=[text,...HIST.filter(x=>x!==text)].slice(0,10);
-  try{localStorage.setItem("rtjpn",JSON.stringify(HIST))}catch(e){}
-  drawHist();
-}
-function drawHist(){
-  const h=$("hist"); h.innerHTML="";
-  HIST.forEach(t=>{
-    const b=document.createElement("button"); b.textContent=t.slice(0,30);
-    b.onclick=()=>fetch(`/api/parse?text=${encodeURIComponent(t)}`)
-      .then(r=>r.json()).then(render).catch(()=>{});
-    h.appendChild(b);
-  });
-}
-function show(i){
-  const t=TOKS[i]; if(!t)return; CUR=t;
-  $("c-w").textContent=t.lemma||t.surface;
-  $("c-r").textContent=t.reading||"";
-  $("c-g").innerHTML=(t.glosses&&t.glosses.length?t.glosses:["—"])
-    .map(g=>`<li>${g.replace(/</g,"&lt;")}</li>`).join("");
-  $("card").style.display="block";
-}
-$("c-x").onclick=()=>$("card").style.display="none";
-$("c-say").onclick=()=>{if(CUR)say(CUR.surface)};
-$("b-say").onclick=()=>{if(TOKS.length)say(TOKS.map(t=>t.surface).join(""))};
-$("b-hist").onclick=()=>{const h=$("hist");h.style.display=h.style.display==="none"?"flex":"none";drawHist();};
-// Wake-lock: la tablet no se duerme a mitad del juego
+fetch("/api/health").then(r=>r.json()).then(h=>{if(h&&h.gen)GEN=h.gen}).catch(()=>{});
+fetch("/api/last").then(r=>r.json()).then(d=>{if(d&&d.tokens&&d.tokens.length)onLive(d)}).catch(()=>{});
 if("wakeLock"in navigator){const lock=()=>{try{navigator.wakeLock.request("screen")}catch(e){}};
   document.addEventListener("visibilitychange",()=>{if(!document.hidden)lock()});lock();}
-// Último resultado al abrir/cargar (por si el WS llegó antes)
-fetch("/api/last").then(r=>r.json()).then(d=>{if(d&&d.tokens&&d.tokens.length)render(d)}).catch(()=>{});
 conn();
 </script>
 </body>
