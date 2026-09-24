@@ -62,6 +62,6 @@ Cliente Win: AHK v2 trigger + shoot_once.py (reemplaza keyboard/pygame residente
 - [x] Fase 2 código (fugashi singletons + lru_cache + /api/parse, verificado: 6 tokens con hiragana, jamdict fallback sin crash sin DB)
 - [ ] Fase 2 en Pi (requiere `pip install -r requirements-pi.txt` con jamdict-data para glosses EN)
 - [x] Fase 3 código (WS /ws + broadcast + /api/last + static/index.html ruby/audio + IndexedDB 100MB caché full + ↻ regenerar + genVersion + ⭐ anti-borrado + orden fecha/fav + chips fecha/hora; verificado: gen en /health, WS conecta, sin romaji)
-- [ ] Fase 4
+- [x] Fase 4 código (`client/shoot_once.py` + `client.ahk` v2 + `requirements-win.txt`, verificado e2e: captura→JPG→POST 200)
 - [ ] Fase 5
 - [ ] Fase 6
