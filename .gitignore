@@ -18,6 +18,7 @@ venv/
 *.jpg
 *.jpeg
 jamdict-data/
+models/
 
 # OS / editores
 .DS_Store

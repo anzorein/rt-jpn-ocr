@@ -42,6 +42,7 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 <div id="bar"><div id="dot"></div><span id="st">conectando…</span>
 <button id="b-cam" title="Capturar PC">📸</button>
 <button id="b-be" title="Backend">G</button>
+<button id="b-key" title="Clave API">🔑</button>
 <button id="b-say" title="Leer oración">🔊</button>
 <button id="b-regen" title="Regenerar análisis">↻</button>
 <button id="b-hist" title="Historial">🕘</button>
@@ -72,7 +73,7 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024, MAX_ENTRIES=500;
 let TOKS=[], CUR=null, CUR_ENTRY=null, GEN=null, PAGE=0;
 const BES=["tesseract","rapidocr","groq"], BEL={tesseract:"T",rapidocr:"R",groq:"G"};
-let pref={sort:"desc",favOnly:false,pageSize:20,backend:"rapidocr"};
+let pref={sort:"desc",favOnly:false,pageSize:20,backend:"rapidocr",apiKey:""};
 try{Object.assign(pref,JSON.parse(localStorage.getItem("rtjpn-pref")||"{}"))}catch(e){}
 if(![10,20,50].includes(pref.pageSize))pref.pageSize=20;
 if(!BES.includes(pref.backend))pref.backend="rapidocr";
@@ -228,11 +229,20 @@ function paintBe(){$("b-be").textContent=BEL[pref.backend]||"?";
   $("b-be").title="Backend: "+pref.backend+" (tap para rotar T/R/G)";}
 $("b-be").onclick=()=>{pref.backend=BES[(BES.indexOf(pref.backend)+1)%BES.length];
   savePref();paintBe();};
+$("b-key").onclick=()=>{ // 🔑 clave = mismo API_KEY de la Pi (solo para POSTs)
+  const v=prompt("API key (igual que API_KEY en la Pi, vacío = sin auth):",pref.apiKey||"");
+  if(v===null)return;
+  pref.apiKey=v.trim();savePref();
+  $("st").textContent=pref.apiKey?"clave guardada":"sin clave";};
 $("b-cam").onclick=()=>{ // 📸 pide a la PC que capture (vía proxy Pi)
   $("st").textContent="capturando…";
-  fetch(`/api/disparar?backend=${pref.backend}`,{method:"POST"})
-    .then(r=>{if(!r.ok)throw new Error(r.status);})
-    .catch(()=>{$("st").textContent="PC no alcanzable";});};
+  const q=`backend=${pref.backend}`+(pref.apiKey?`&key=${encodeURIComponent(pref.apiKey)}`:"");
+  fetch(`/api/disparar?${q}`,{method:"POST"})
+    .then(async r=>{
+      if(r.status===401)throw new Error("401: clave mal (botón 🔑)");
+      if(r.status===502)throw new Error("502: PC no alcanzable");
+      if(!r.ok)throw new Error(r.status);})
+    .catch(e=>{$("st").textContent=String(e.message||e).replace("Error: ","");});};
 paintBe();
 $("b-hist").onclick=()=>{const on=$("hist").classList.toggle("on");
   $("histbar").classList.toggle("on",on);if(on)drawHist();};

@@ -114,13 +114,39 @@ def get_jam():
     return _JAM
 
 
+RAPID_REC_URL = os.getenv(
+    "RAPID_REC_URL",
+    "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/"
+    "v3.9.2/onnx/PP-OCRv4/rec/japan_PP-OCRv4_rec_mobile.onnx")
+RAPID_DICT_URL = os.getenv(
+    "RAPID_DICT_URL",
+    "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/"
+    "v3.9.2/paddle/PP-OCRv4/rec/japan_PP-OCRv4_rec_mobile/japan_dict.txt")
+
+
+def _dl(url: str, path: Path, min_bytes: int = 1_000_000) -> Path:
+    if path.exists() and path.stat().st_size > min_bytes:
+        return path
+    import urllib.request
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    urllib.request.urlretrieve(url, tmp)
+    if tmp.stat().st_size <= min_bytes:
+        raise RuntimeError(f"descarga incompleta: {url}")
+    tmp.replace(path)
+    return path
+
+
 def get_rapid():
-    """RapidOCR-ONNX lazy. Requiere Pi OS 64-bit (onnxruntime sin wheel
-    en armv7l 32-bit) + internet una vez (modelos ~20MB auto-descarga)."""
+    """RapidOCR-ONNX lazy con rec JAPONÉS (default del paquete es chino).
+    Descarga una vez (~10MB) a ./models. Requiere Pi OS 64-bit."""
     global _RAPID
     if _RAPID is None:
         from rapidocr_onnxruntime import RapidOCR
-        _RAPID = RapidOCR()
+        mdir = BASE / "models"
+        rec = _dl(RAPID_REC_URL, mdir / "japan_PP-OCRv4_rec_mobile.onnx")
+        keys = _dl(RAPID_DICT_URL, mdir / "japan_dict.txt", min_bytes=1000)
+        _RAPID = RapidOCR(rec_model_path=str(rec), rec_keys_path=str(keys))
     return _RAPID
 
 

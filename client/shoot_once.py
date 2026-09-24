@@ -55,7 +55,8 @@ def main() -> int:
         r.raise_for_status()
         d = r.json()
         be = d.get("backend", "?")
-        tag = f"[{'G' if be == 'groq' else 'T'} {d.get('ms', '?')}ms " \
+        bl = {"groq": "G", "rapidocr": "R", "tesseract": "T"}.get(be, "?")
+        tag = f"[{bl} {d.get('ms', '?')}ms " \
               f"(ocr {d.get('ocr_ms', '?')} + dict {d.get('dict_ms', '?')})]"
         print(f"{tag} {(d.get('text') or '(sin texto)')[:200]}")
         return 0
