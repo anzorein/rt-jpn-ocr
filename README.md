@@ -1,0 +1,90 @@
+# RT-JPN-OCR
+
+Real-time Japanese game translator: screenshot → OCR → furigana + JMdict popup dictionary. FastAPI server for Raspberry Pi 3B+ (1GB RAM), AHK screenshot client, Telegram bot, tap-to-hear tablet UI.
+
+## Cómo funciona
+
+```
+PC (juego) ──screenshot──▶ Pi :8000 ──WS──▶ tablet (furigana + tarjeta + 🔊)
+   ▲                          ▲
+AHK/Joy1/button                │ foto Telegram (bypasea la PC)
+tablet 📸 (vía proxy Pi) ──────┘
+```
+
+La Pi hace OCR (local Tesseract o cloud Groq vision, a elección por disparo),
+tokeniza con `fugashi` + `unidic-lite`, busca glosses en JMdict (`jamdict`
+SQLite local) y lo emite por WebSocket. La tablet muestra la oración en grande
+con `<ruby>` furigana; cada palabra abre tarjeta estilo Yomitan (palabra +
+hiragana + significados, **sin romaji**) con audio `ja-JP` sintetizado en la
+tablet (cero carga Pi) e historial IndexedDB offline con favoritas.
+
+## Estructura
+
+```
+server.py              FastAPI + OCR dual + WS + frontend
+static/index.html      UI tablet (dark, táctil, sin romaji)
+client/shoot_once.py   captura on-demand PC (ROI + JPG q70 + POST)
+client/shoot_listen.py listener :8120 para el botón 📸 de la tablet
+client/client.ahk      triggers AHK v2 (J=default, G=groq, T=local, Joy1)
+client/USO_PC.md       guía PC
+bot/telegram_bot.py    bot fotos (/start, /roi) — corre en la Pi
+bot/USO_BOT.md         guía bot
+deploy/*.service       systemd Pi
+requirements-pi.txt    deps Pi (cv2 por apt, ver abajo)
+```
+
+## Pi 3B+ (una vez)
+
+```bash
+sudo apt update && sudo apt install -y tesseract-ocr tesseract-ocr-jpn \
+  fonts-noto-cjk python3-pip python3-opencv
+# cv2 por apt: pip compila 2h y falla en 32-bit. NO usar pip opencv.
+git clone https://github.com/anzorein/rt-jpn-ocr.git
+cd rt-jpn-ocr && pip3 install -r requirements-pi.txt
+cp .env.example .env   # completar claves, NUNCA commitear
+uvicorn server:app --host 0.0.0.0 --port 8000 --workers 1
+curl localhost:8000/api/selftest   # ok=true = base lista
+```
+
+## Variables (.env en la Pi, PC según caso)
+
+| Var | Dónde | Default | Qué |
+|---|---|---|---|
+| `OCR_BACKEND` | Pi | `tesseract` | default `tesseract\|groq` |
+| `GROQ_API_KEY` | Pi | — | cloud vision (sin esto, groq → 501) |
+| `GROQ_MODEL` | Pi | llama-4-scout | modelo vision Groq |
+| `API_KEY` | Pi | — | exige `?key=` en POST (vacío = abierto) |
+| `PC_LISTENER_URL` | Pi | `http://192.168.1.100:8120/capturar` | proxy botón 📸 |
+| `PC_KEY` | ambas | — | clave listener PC |
+| `TELEGRAM_TOKEN` | Pi | — | token BotFather |
+| `RTJPN_URL/KEY/ROI/BACKEND` | PC | — | ver `client/USO_PC.md` |
+
+## Endpoints (Pi :8000)
+
+- `/` tablet UI · `GET /api/health|last|selftest|parse?text=` · `WS /ws`
+- `POST /api/ocr?backend=&roi=&psm=&keep_furigana=&key=` (multipart `file`)
+- `POST /api/disparar?backend=&key=` (botón 📸 → PC)
+
+## Backends OCR
+
+| | tesseract (local) | groq (cloud) |
+|---|---|---|
+| Internet | no | sí |
+| Latencia Pi 3B+ | 5-15 s | 2-4 s |
+| Precisión juegos | ~60-70% | ~90% |
+| Costo/privacidad | gratis, local | API Groq, capturas a la nube |
+
+Toggle: tablet T/G, PC `--backend`, bot `?backend=` (precedencia: request > chat/PC > default).
+
+## Deploy Pi (systemd)
+
+```bash
+sudo cp deploy/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jpn-ocr jpn-bot
+```
+
+## Licencia
+
+Código: MIT. Datos de diccionario: JMdict/EDRDG © CC BY-SA
+(atribución en el footer de la tablet).

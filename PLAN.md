@@ -64,4 +64,5 @@ Cliente Win: AHK v2 trigger + shoot_once.py (reemplaza keyboard/pygame residente
 - [x] Fase 3 código (WS /ws + broadcast + /api/last + static/index.html ruby/audio + IndexedDB 100MB caché full + ↻ regenerar + genVersion + ⭐ anti-borrado + orden fecha/fav + chips fecha/hora; verificado: gen en /health, WS conecta, sin romaji)
 - [x] Fase 4 código (`client/shoot_once.py` + `client.ahk` v2 + `requirements-win.txt`, verificado e2e: captura→JPG→POST 200)
 - [x] Fase 5 código (`bot/telegram_bot.py` + `USO_BOT.md`, verificado: compila, importa, sin token hardcodeado)
-- [ ] Fase 6
+- [x] Fase 6 código (`deploy/*.service` + `README.md`, verificado: sweep 17/17)
+- [ ] En Pi: apt + pip + `.env` + selftest + `systemctl enable --now jpn-ocr jpn-bot` + `git pull` por fase

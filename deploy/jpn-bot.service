@@ -1,0 +1,16 @@
+[Unit]
+Description=RT-JPN-OCR Telegram bot
+After=network-online.target jpn-ocr.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/rt-jpn-ocr
+EnvironmentFile=/home/pi/rt-jpn-ocr/.env
+ExecStart=/usr/bin/python3 bot/telegram_bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
