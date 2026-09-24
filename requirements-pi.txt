@@ -11,3 +11,5 @@ unidic-lite
 jamdict
 jamdict-data
 jaconv
+python-telegram-bot
+httpx
