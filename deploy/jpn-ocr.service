@@ -8,7 +8,7 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/rt-jpn-ocr
 EnvironmentFile=/home/pi/rt-jpn-ocr/.env
-ExecStart=/usr/bin/python3 -m uvicorn server:app --host 0.0.0.0 --port 8000 --workers 1
+ExecStart=/home/pi/rt-jpn-ocr/.venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 

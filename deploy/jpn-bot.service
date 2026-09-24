@@ -8,7 +8,7 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/rt-jpn-ocr
 EnvironmentFile=/home/pi/rt-jpn-ocr/.env
-ExecStart=/usr/bin/python3 bot/telegram_bot.py
+ExecStart=/home/pi/rt-jpn-ocr/.venv/bin/python bot/telegram_bot.py
 Restart=always
 RestartSec=10
 

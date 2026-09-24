@@ -36,13 +36,16 @@ requirements-pi.txt    deps Pi (cv2 por apt, ver abajo)
 ## Pi 3B+ (una vez)
 
 ```bash
-sudo apt update && sudo apt install -y tesseract-ocr tesseract-ocr-jpn \
-  fonts-noto-cjk python3-pip python3-opencv
+sudo apt update && sudo apt install -y python3-full python3-venv \
+  python3-opencv tesseract-ocr tesseract-ocr-jpn fonts-noto-cjk
 # cv2 por apt: pip compila 2h y falla en 32-bit. NO usar pip opencv.
+# PEP 668: nada de pip al sistema; venv con acceso a los paquetes apt.
 git clone https://github.com/anzorein/rt-jpn-ocr.git
-cd rt-jpn-ocr && pip3 install -r requirements-pi.txt
+cd rt-jpn-ocr
+python3 -m venv --system-site-packages .venv
+.venv/bin/pip install -r requirements-pi.txt
 cp .env.example .env   # completar claves, NUNCA commitear
-uvicorn server:app --host 0.0.0.0 --port 8000 --workers 1
+.venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port 8000 --workers 1
 curl localhost:8000/api/selftest   # ok=true = base lista
 ```
 
