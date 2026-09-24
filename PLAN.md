@@ -59,7 +59,8 @@ Cliente Win: AHK v2 trigger + shoot_once.py (reemplaza keyboard/pygame residente
 - [ ] Fase 0 (en Pi: apt + free/df + tesseract --list-langs)
 - [x] Fase 1 código (`jpn-ocr/server.py` + selftest, verificado en PC: `/health` OK, `/selftest` responde sin crash sin tesseract)
 - [ ] Fase 1 en Pi (requiere tesseract-ocr-jpn para `selftest.ok=true`)
-- [ ] Fase 2
+- [x] Fase 2 código (fugashi singletons + lru_cache + /api/parse, verificado: 6 tokens con hiragana, jamdict fallback sin crash sin DB)
+- [ ] Fase 2 en Pi (requiere `pip install -r requirements-pi.txt` con jamdict-data para glosses EN)
 - [ ] Fase 3
 - [ ] Fase 4
 - [ ] Fase 5
