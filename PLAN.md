@@ -4,7 +4,7 @@ Decisiones aprobadas: fugashi=unidic-lite, bot en Pi, glosas en inglés (JMdict 
 Cliente Win: AHK v2 trigger + shoot_once.py (reemplaza keyboard/pygame residente).
 
 ## Fase 0 — Base + red + disco (una vez)
-- Pi OS Lite 64-bit, IP fija 192.168.1.50 + `raspberrypi.local`, preferible cable (WiFi 2.4GHz de la 3B+ es lento para PNG 3-5MB).
+- Pi OS Lite 64-bit, IP fija 192.168.10.10 + `raspberrypi.local`, preferible cable (WiFi 2.4GHz de la 3B+ es lento para PNG 3-5MB).
 - `sudo apt install tesseract-ocr tesseract-ocr-jpn fonts-noto-cjk python3-pip python3-opencv`
   # NOTA: cv2 por apt (precompilado). NO usar pip opencv-python-headless en Pi 32-bit (compila 2h y falla).
 - Verificar: `tesseract --list-langs | grep jpn`, `free -h`, `df -h /` (jamdict-data ~400MB + unidic-lite, SD 16GB mínima).
@@ -37,14 +37,14 @@ Cliente Win: AHK v2 trigger + shoot_once.py (reemplaza keyboard/pygame residente
 
 ## Fase 4 — Cliente Windows (AHK v2 + shoot_once)
 - `client.ahk` (v2, ~5MB, sin admin para hotkey global): `^+j` y `Joy1` como triggers → llama a `shoot_once.py`.
-- `shoot_once.py` (sin loop, sin `keyboard`, sin `pygame`): `mss` + ROI configurable local `{"left,top,width,height"}` (caja de diálogo, clave para precisión) + JPG q70 + `POST http://192.168.1.50:8000/api/ocr?key=...&roi=...` → termina. ROI también ajustable remoto (ver Fase 1 override) y vía `/roi` del bot con foto recortada.
+- `shoot_once.py` (sin loop, sin `keyboard`, sin `pygame`): `mss` + ROI configurable local `{"left,top,width,height"}` (caja de diálogo, clave para precisión) + JPG q70 + `POST http://192.168.10.10:8000/api/ocr?key=...&roi=...` → termina. ROI también ajustable remoto (ver Fase 1 override) y vía `/roi` del bot con foto recortada.
 - `inputs` queda como plan B solo si se quiere 100% Python.
 - `pip install mss pillow requests` + AHK v2 runtime.
 - Check: captura → tablet muestra resultado.
 
 ## Fase 5 — Bot Telegram (en Pi)
 - `telegram_bot.py`: `python-telegram-bot + httpx`, handlers `photo/start`.
-- Flujo: foto → "📤 Enviada…" → POST 127.0.0.1:8000 → "✅ Traducida, mírala: http://192.168.1.50:8000".
+- Flujo: foto → "📤 Enviada…" → POST 127.0.0.1:8000 → "✅ Traducida, mírala: http://192.168.10.10:8000".
 - Dependencia internet: bot necesita salida a `api.telegram.org` siempre; web/tablet sigue offline, bot no. `systemd Restart=always`.
 - Token vía @BotFather. Check: enviar foto → doble mensaje.
 

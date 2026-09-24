@@ -54,7 +54,7 @@ curl localhost:8000/api/selftest   # ok=true = base lista
 | `GROQ_API_KEY` | Pi | — | cloud vision (sin esto, groq → 501) |
 | `GROQ_MODEL` | Pi | llama-4-scout | modelo vision Groq |
 | `API_KEY` | Pi | — | exige `?key=` en POST (vacío = abierto) |
-| `PC_LISTENER_URL` | Pi | `http://192.168.1.100:8120/capturar` | proxy botón 📸 |
+| `PC_LISTENER_URL` | Pi | `http://192.168.10.15:8120/capturar` | proxy botón 📸 |
 | `PC_KEY` | ambas | — | clave listener PC |
 | `TELEGRAM_TOKEN` | Pi | — | token BotFather |
 | `RTJPN_URL/KEY/ROI/BACKEND` | PC | — | ver `client/USO_PC.md` |

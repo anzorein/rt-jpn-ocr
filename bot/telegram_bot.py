@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 API = os.getenv("API_URL", "http://127.0.0.1:8000/api/ocr")
-WEB = os.getenv("WEB_URL", "http://192.168.1.50:8000/")
+WEB = os.getenv("WEB_URL", "http://192.168.10.10:8000/")
 ROI = {"value": os.getenv("RTJPN_ROI", "")}
 
 

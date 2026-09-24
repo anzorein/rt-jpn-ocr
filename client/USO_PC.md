@@ -13,7 +13,7 @@ Opcional: AutoHotkey v2 desde https://www.autohotkey.com/
 ## Configurar (una vez)
 
 ```powershell
-$env:RTJPN_URL="http://192.168.1.50:8000/api/ocr"
+$env:RTJPN_URL="http://192.168.10.10:8000/api/ocr"
 ```
 
 Opcional pero recomendado — recorte a la caja de diálogo

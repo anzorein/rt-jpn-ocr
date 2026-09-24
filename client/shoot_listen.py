@@ -1,7 +1,7 @@
 """shoot_listen.py — listener LAN para el botón 📸 de la tablet.
 Pi /api/disparar -> POST http://PC:8120/capturar?key=... -> captura y POST a la Pi.
 Solo stdlib (+mss/pillow/requests ya instalados). ?key= obligatorio si PC_KEY definido.
-Uso: set PC_KEY=... & set RTJPN_URL=http://192.168.1.50:8000/api/ocr & python shoot_listen.py
+Uso: set PC_KEY=... & set RTJPN_URL=http://192.168.10.10:8000/api/ocr & python shoot_listen.py
 """
 import io
 import os
@@ -14,7 +14,7 @@ from PIL import Image
 
 PORT = int(os.getenv("PC_LISTEN_PORT", "8120"))
 PC_KEY = os.getenv("PC_KEY", "")
-RTJPN_URL = os.getenv("RTJPN_URL", "http://192.168.1.50:8000/api/ocr")
+RTJPN_URL = os.getenv("RTJPN_URL", "http://192.168.10.10:8000/api/ocr")
 RTJPN_KEY = os.getenv("RTJPN_KEY", "")
 RTJPN_ROI = os.getenv("RTJPN_ROI", "")
 RTJPN_BACKEND = os.getenv("RTJPN_BACKEND", "")

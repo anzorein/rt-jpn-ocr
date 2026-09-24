@@ -27,7 +27,7 @@ OCR_BACKEND = os.getenv("OCR_BACKEND", "tesseract")  # default; override por ?ba
 API_KEY = os.getenv("API_KEY", "")  # vacío = sin auth (dev); en prod definir
 GROQ_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-PC_URL = os.getenv("PC_LISTENER_URL", "http://192.168.1.100:8120/capturar")
+PC_URL = os.getenv("PC_LISTENER_URL", "http://192.168.10.15:8120/capturar")
 PC_KEY = os.getenv("PC_KEY", "")
 BASE = Path(__file__).parent
 LAST_RESULT: dict = {}

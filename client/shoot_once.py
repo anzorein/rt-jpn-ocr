@@ -19,7 +19,7 @@ def parse_roi(s: str):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default=os.getenv("RTJPN_URL", "http://192.168.1.50:8000/api/ocr"))
+    ap.add_argument("--url", default=os.getenv("RTJPN_URL", "http://192.168.10.10:8000/api/ocr"))
     ap.add_argument("--key", default=os.getenv("RTJPN_KEY", ""))
     ap.add_argument("--roi", default=os.getenv("RTJPN_ROI", ""),
                     help="x,y,w,h en px (caja de diálogo). Vacío = pantalla principal.")
