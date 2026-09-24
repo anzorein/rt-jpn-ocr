@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secretos — NUNCA subir (repo público)
+.env
+*.env
+*.token
+*token*.txt
+*token*.json
+
+# Datos pesados / locales
+*.db
+*.sqlite*
+*.png
+*.jpg
+*.jpeg
+jamdict-data/
+
+# OS / editores
+.DS_Store
+Thumbs.db
+.vscode/
