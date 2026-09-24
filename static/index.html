@@ -48,6 +48,12 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 <button id="s-desc" class="act">Fecha ↓</button>
 <button id="s-asc">Fecha ↑</button>
 <button id="s-fav">⭐ Solo fav</button>
+<select id="s-page" title="Por página">
+<option value="10">10</option>
+<option value="20" selected>20</option>
+<option value="50">50</option>
+</select>
+<button id="pg-prev">‹</button><span id="pg-info"></span><button id="pg-next">›</button>
 <button id="s-clear" style="margin-left:auto">🗑 Todo</button>
 </div>
 <div id="hist"></div>
@@ -61,19 +67,26 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 /* Store: IndexedDB 100MB, caché full {id,ts,text,result,v,fav}.
    Eviction LRU que salta favoritas. Política aislada en evict() para
    cambiarla sin tocar la UI. */
-const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024;
-let TOKS=[], CUR=null, CUR_ENTRY=null, GEN=null;
-let pref={sort:"desc",favOnly:false};
+const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024, MAX_ENTRIES=500;
+let TOKS=[], CUR=null, CUR_ENTRY=null, GEN=null, PAGE=0;
+let pref={sort:"desc",favOnly:false,pageSize:20};
 try{Object.assign(pref,JSON.parse(localStorage.getItem("rtjpn-pref")||"{}"))}catch(e){}
+if(![10,20,50].includes(pref.pageSize))pref.pageSize=20;
 const $=id=>document.getElementById(id);
 const wsProto=location.protocol==="https:"?"wss":"ws";
 function savePref(){try{localStorage.setItem("rtjpn-pref",JSON.stringify(pref))}catch(e){}}
 function say(t){try{speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(t);u.lang="ja-JP";u.rate=0.9;
   speechSynthesis.speak(u);}catch(e){}}
-function fmtDT(ts){const d=new Date(ts);
-  return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")+" "+
-    String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0");}
+/* Fecha japonesa para inmersión (días 年月日 + 曜日).
+   ts crudo numérico intacto: el orden usa ts, no el string. */
+const YOUBI=["日","月","火","水","木","金","土"];
+const P2=n=>String(n).padStart(2,"0");
+function fmtShort(ts){const d=new Date(ts);
+  return `${P2(d.getMonth()+1)}/${P2(d.getDate())} ${P2(d.getHours())}:${P2(d.getMinutes())}`;}
+function fmtFull(ts){const d=new Date(ts);
+  return `${d.getFullYear()}年${P2(d.getMonth()+1)}月${P2(d.getDate())}日 `+
+    `${P2(d.getHours())}:${P2(d.getMinutes())}(${YOUBI[d.getDay()]})`;}
 /* ---- IndexedDB ---- */
 let _db=null;
 function db(){return new Promise((res,rej)=>{
@@ -88,15 +101,25 @@ function tx(mode,fn){return db().then(d=>new Promise((res,rej)=>{
   const t=d.transaction("history",mode),s=t.objectStore("history"),rq=fn(s);
   t.oncomplete=()=>res(rq&&rq.result);t.onerror=e=>rej(e);}));}
 async function evict(){
-  // LRU: borra no-favoritas más viejas hasta quedar bajo cuota.
-  // Si todo es favorito, no borra y avisa.
+  // LRU: borra no-favoritas más viejas hasta quedar bajo cuota Y bajo
+  // MAX_ENTRIES. Si todo es favorito, no borra y avisa.
+  // ts crudo intacto: solo se eliminan registros completos.
+  const all0=await tx("readonly",s=>s.index("ts").getAll());
+  let over = all0.filter(r=>!r.fav);
+  if(all0.length>MAX_ENTRIES){
+    for(const r of all0){ // ts asc: viejas primero
+      if(all0.length<=MAX_ENTRIES)break;
+      if(r.fav)continue;
+      await tx("readwrite",s=>s.delete(r.id));
+      all0.splice(all0.indexOf(r),1);
+    }
+  }
   let usage=0; try{const e=await navigator.storage.estimate();usage=e.usage||0;}catch(err){}
   if(usage<MAX_BYTES)return;
   const all=await tx("readonly",s=>s.index("ts").getAll());
   let freed=false;
   for(const r of all){ // ts asc: viejas primero
     if(r.fav)continue;
-    try{const sz=JSON.stringify(r).length;}catch(e){}
     await tx("readwrite",s=>s.delete(r.id)); freed=true;
     try{const e2=await navigator.storage.estimate();if((e2.usage||0)<MAX_BYTES)break;}catch(e2){break;}
   }
@@ -141,10 +164,16 @@ function paintFav(){$("c-fav").textContent=(CUR_ENTRY&&CUR_ENTRY.fav)?"★":"☆
 async function drawHist(){
   const h=$("hist");h.innerHTML="";
   let all=[];try{all=await listEntries()}catch(e){return;}
-  all.slice(0,200).forEach(r=>{
+  const total=all.length, pages=Math.max(1,Math.ceil(total/pref.pageSize));
+  if(PAGE>pages-1)PAGE=pages-1;
+  const slice=all.slice(PAGE*pref.pageSize,(PAGE+1)*pref.pageSize);
+  $("pg-info").textContent=`${PAGE+1}/${pages} (${total})`;
+  $("s-page").value=String(pref.pageSize);
+  slice.forEach(r=>{
     const c=document.createElement("div");c.className="chip";
+    c.title=fmtFull(r.ts); // fecha japonesa completa en tooltip
     const stale=GEN&&r.v&&r.v!==GEN;
-    c.innerHTML=`<span class="dt">${fmtDT(r.ts)}</span>`+
+    c.innerHTML=`<span class="dt">${fmtShort(r.ts)}</span>`+
       (stale?`<span class="stale" title="generador cambiado">↻</span>`:"")+
       `<span class="t">${String(r.text).slice(0,30).replace(/</g,"&lt;")}</span>`;
     const bf=document.createElement("button");
@@ -167,7 +196,7 @@ async function drawHist(){
 async function onLive(d){
   if(!d||!d.tokens||!d.text)return;
   render(d);
-  try{await saveEntry(d.text,d.tokens,d.v);drawHist();}catch(e){}
+  try{await saveEntry(d.text,d.tokens,d.v);PAGE=0;drawHist();}catch(e){}
 }
 $("c-x").onclick=()=>$("card").style.display="none";
 $("c-say").onclick=()=>{if(CUR)say(CUR.surface)};
@@ -188,13 +217,18 @@ $("b-regen").onclick=()=>{ // ↻ regenera análisis actual con el generador nue
     drawHist();}).catch(()=>{});};
 $("b-hist").onclick=()=>{const on=$("hist").classList.toggle("on");
   $("histbar").classList.toggle("on",on);if(on)drawHist();};
-$("s-desc").onclick=()=>{pref.sort="desc";savePref();drawHist();};
-$("s-asc").onclick=()=>{pref.sort="asc";savePref();drawHist();};
-$("s-fav").onclick=()=>{pref.favOnly=!pref.favOnly;savePref();drawHist();};
-$("s-clear").onclick=async()=>{ // salta favoritas
+$("s-desc").onclick=()=>{pref.sort="desc";PAGE=0;savePref();drawHist();};
+$("s-asc").onclick=()=>{pref.sort="asc";PAGE=0;savePref();drawHist();};
+$("s-fav").onclick=()=>{pref.favOnly=!pref.favOnly;PAGE=0;savePref();drawHist();};
+$("s-page").onchange=e=>{pref.pageSize=parseInt(e.target.value,10)||20;PAGE=0;savePref();drawHist();};
+$("pg-prev").onclick=()=>{if(PAGE>0){PAGE--;drawHist();}};
+$("pg-next").onclick=async()=>{const a=await listEntries();
+  if((PAGE+1)*pref.pageSize<a.length){PAGE++;drawHist();}};
+$("s-clear").onclick=async()=>{ // salta favoritas, con confirmación
+  if(!confirm("¿Borrar historial no-favorito?"))return;
   const all=await tx("readonly",s=>s.getAll());
   for(const r of all){if(!r.fav)await tx("readwrite",s=>s.delete(r.id));}
-  drawHist();};
+  PAGE=0;drawHist();};
 /* ---- WS ---- */
 function conn(){
   const ws=new WebSocket(`${wsProto}://${location.host}/ws`);
