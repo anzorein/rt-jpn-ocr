@@ -1,10 +1,11 @@
-"""Fase 2: FastAPI + Otsu + furigana + OCR swappable + fugashi/jamdict + selftest."""
+"""Fase 3: FastAPI + Otsu + furigana + OCR swappable + fugashi/jamdict + WS + frontend."""
 import asyncio
 import io
 import os
 from functools import lru_cache
-from fastapi import FastAPI, UploadFile, File, Query
-from fastapi.responses import HTMLResponse
+from pathlib import Path
+from fastapi import FastAPI, UploadFile, File, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 try:
@@ -20,9 +21,29 @@ try:
 except ImportError:
     HAS_TESS = False
 
-app = FastAPI(title="JPN-OCR Fase2")
+app = FastAPI(title="RT-JPN-OCR Fase3")
 OCR_LOCK = asyncio.Lock()
 OCR_BACKEND = os.getenv("OCR_BACKEND", "tesseract")
+BASE = Path(__file__).parent
+LAST_RESULT: dict = {}
+
+
+class Hub:
+    def __init__(self):
+        self.clients: set = set()
+
+    async def broadcast(self, data: dict):
+        dead = []
+        for ws in self.clients:
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.append(ws)
+        for d in dead:
+            self.clients.discard(d)
+
+
+hub = Hub()
 
 # Singletons perezosos (RAM Pi 3B+: no cargar dicts hasta primer uso)
 _TAGGER = None
@@ -194,11 +215,34 @@ async def api_ocr(
     async with OCR_LOCK:
         text = await asyncio.to_thread(ocr_dispatch, proc, psm)
     toks = await asyncio.to_thread(tokenize, text) if text else []
-    return {"text": text, "tokens": toks}
+    res = {"text": text, "tokens": toks}
+    global LAST_RESULT
+    LAST_RESULT = res
+    await hub.broadcast(res)
+    return res
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/api/last")
+async def api_last():
+    return LAST_RESULT
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    await ws.accept()
+    hub.clients.add(ws)
+    if LAST_RESULT:
+        try:
+            await ws.send_json(LAST_RESULT)
+        except Exception:
+            pass
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        hub.clients.discard(ws)
+
+
+@app.get("/")
 async def index():
-    return """<h1>JPN-OCR Fase2 OK</h1>
-<p><a href="/api/health">health</a> - <a href="/api/selftest">selftest</a>
-- <a href="/api/parse?text=食べる">parse test</a></p>"""
+    return FileResponse(BASE / "static" / "index.html")
