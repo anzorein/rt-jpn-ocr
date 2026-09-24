@@ -95,6 +95,7 @@ hub = Hub()
 # Singletons perezosos (RAM Pi 3B+: no cargar dicts hasta primer uso)
 _TAGGER = None
 _JAM = None
+_RAPID = None
 
 
 def get_tagger():
@@ -111,6 +112,31 @@ def get_jam():
         from jamdict import Jamdict
         _JAM = Jamdict()
     return _JAM
+
+
+def get_rapid():
+    """RapidOCR-ONNX lazy. Requiere Pi OS 64-bit (onnxruntime sin wheel
+    en armv7l 32-bit) + internet una vez (modelos ~20MB auto-descarga)."""
+    global _RAPID
+    if _RAPID is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _RAPID = RapidOCR()
+    return _RAPID
+
+
+def ocr_rapid(img: Image.Image) -> str:
+    """Full-screen friendly: detección + reconocimiento en una pasada."""
+    eng = get_rapid()
+    if HAS_CV2:
+        arr = np.array(img.convert("RGB"))
+    else:
+        import numpy as _np
+        arr = _np.array(img.convert("RGB"))
+    res, _ = eng(arr)
+    if not res:
+        return ""
+    lines = sorted(res, key=lambda b: b[0][0][1])  # top-to-bottom
+    return "\n".join(t for _, t, _ in lines if t).strip()
 
 
 @lru_cache(maxsize=2000)
@@ -291,7 +317,7 @@ async def api_ocr(
     keep_furigana: bool = Query(False),
     psm: int = Query(6),
     roi: str = Query("", description="x,y,w,h en px sobre imagen original"),
-    backend: str = Query("", description="tesseract|groq (vacío=default)"),
+    backend: str = Query("", description="tesseract|rapidocr|groq (vacío=default)"),
     key: str = Query(""),
 ):
     check_auth(key, request)
@@ -318,9 +344,21 @@ async def api_ocr(
         proc = preprocess(img, keep_furigana=keep_furigana)
         async with OCR_LOCK:
             text = await asyncio.to_thread(ocr_dispatch, proc, psm)
+    elif be == "rapidocr":
+        # Local rápido, full-screen friendly: imagen a color, downscale si enorme
+        rimg = img.copy()
+        if max(rimg.size) > 1568:
+            rimg.thumbnail((1568, 1568), Image.LANCZOS)
+        try:
+            async with OCR_LOCK:
+                text = await asyncio.to_thread(ocr_rapid, rimg)
+        except ImportError:
+            from fastapi import HTTPException
+            raise HTTPException(501, "modo rapidocr no instalado en la Pi "
+                                     "(pip install rapidocr-onnxruntime, Pi OS 64-bit)")
     else:
         from fastapi import HTTPException
-        raise HTTPException(400, f"backend desconocido: {be} (tesseract|groq)")
+        raise HTTPException(400, f"backend desconocido: {be} (tesseract|rapidocr|groq)")
     ocr_ms = int((time.time() - t0) * 1000)
     t1 = time.time()
     toks = await asyncio.to_thread(tokenize, text) if text else []

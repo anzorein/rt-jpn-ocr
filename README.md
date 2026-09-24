@@ -70,14 +70,14 @@ curl localhost:8000/api/selftest   # ok=true = base lista
 
 ## Backends OCR
 
-| | tesseract (local) | groq (cloud) |
-|---|---|---|
-| Internet | no | sí |
-| Latencia Pi 3B+ | 5-15 s | 2-4 s |
-| Precisión juegos | ~60-70% | ~90% |
-| Costo/privacidad | gratis, local | API Groq, capturas a la nube |
+| | tesseract (local) | rapidocr (local) | groq (cloud) |
+|---|---|---|---|
+| Internet | no | una vez (modelos) | sí |
+| Latencia Pi 3B+ | 5-15 s (ROI) />60 s (full) | segundos (full-screen) | 2-4 s |
+| Precisión juegos | ~60-70% | alta, texto en cualquier zona | ~90% |
+| Costo/privacidad | gratis, local | gratis, local | API Groq, capturas a la nube |
 
-Toggle: tablet T/G, PC `--backend`, bot `?backend=` (precedencia: request > chat/PC > default).
+Toggle: tablet T/R/G, PC `--backend`, bot `/modo` (precedencia: request > chat/PC > default).
 
 ## Deploy Pi (systemd)
 

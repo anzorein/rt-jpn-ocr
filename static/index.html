@@ -71,10 +71,11 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
    cambiarla sin tocar la UI. */
 const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024, MAX_ENTRIES=500;
 let TOKS=[], CUR=null, CUR_ENTRY=null, GEN=null, PAGE=0;
-let pref={sort:"desc",favOnly:false,pageSize:20,backend:"groq"};
+const BES=["tesseract","rapidocr","groq"], BEL={tesseract:"T",rapidocr:"R",groq:"G"};
+let pref={sort:"desc",favOnly:false,pageSize:20,backend:"rapidocr"};
 try{Object.assign(pref,JSON.parse(localStorage.getItem("rtjpn-pref")||"{}"))}catch(e){}
 if(![10,20,50].includes(pref.pageSize))pref.pageSize=20;
-if(!["tesseract","groq"].includes(pref.backend))pref.backend="groq";
+if(!BES.includes(pref.backend))pref.backend="rapidocr";
 const $=id=>document.getElementById(id);
 const wsProto=location.protocol==="https:"?"wss":"ws";
 function savePref(){try{localStorage.setItem("rtjpn-pref",JSON.stringify(pref))}catch(e){}}
@@ -153,7 +154,7 @@ function render(d,entry){
       const rt=document.createElement("rt");rt.textContent=t.reading;r.appendChild(rt);}
     r.onclick=()=>show(i);$("sent").appendChild(r);});
   $("st").textContent=(d.text?d.text.slice(0,44):"sin texto")+
-    (d.backend?(d.backend==="groq"?" [G]":" [T]"):"")+
+    (d.backend?` [${BEL[d.backend]||"?"}]`:"")+
     (d.ms!=null?` ${d.ms}ms`:"");
   $("cnt").textContent=(d.ocr_ms!=null?`ocr ${d.ocr_ms} + dict ${d.dict_ms}ms`:"")+
     (d.psm?` · psm${d.psm}`:"");
@@ -223,9 +224,9 @@ $("b-regen").onclick=()=>{ // ↻ regenera con el backend actual (T/G)
       try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
     else{try{await saveEntry(d.text,d.tokens,d.v)}catch(e){}}
     drawHist();}).catch(()=>{});};
-function paintBe(){$("b-be").textContent=pref.backend==="groq"?"G":"T";
-  $("b-be").title="Backend: "+pref.backend+" (tap para cambiar)";}
-$("b-be").onclick=()=>{pref.backend=pref.backend==="groq"?"tesseract":"groq";
+function paintBe(){$("b-be").textContent=BEL[pref.backend]||"?";
+  $("b-be").title="Backend: "+pref.backend+" (tap para rotar T/R/G)";}
+$("b-be").onclick=()=>{pref.backend=BES[(BES.indexOf(pref.backend)+1)%BES.length];
   savePref();paintBe();};
 $("b-cam").onclick=()=>{ // 📸 pide a la PC que capture (vía proxy Pi)
   $("st").textContent="capturando…";

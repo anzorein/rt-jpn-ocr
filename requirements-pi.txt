@@ -14,3 +14,6 @@ jamdict-data
 jaconv
 python-telegram-bot
 httpx
+# RapidOCR local rápido (requiere Pi OS 64-bit: onnxruntime sin wheel en armv7l;
+# + internet una vez para modelos ~20MB). Opcional: sin esto, tesseract sigue.
+rapidocr-onnxruntime

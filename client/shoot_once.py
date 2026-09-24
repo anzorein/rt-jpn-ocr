@@ -22,11 +22,11 @@ def main() -> int:
     ap.add_argument("--url", default=os.getenv("RTJPN_URL", "http://192.168.10.10:8000/api/ocr"))
     ap.add_argument("--key", default=os.getenv("RTJPN_KEY", ""))
     ap.add_argument("--roi", default=os.getenv("RTJPN_ROI", ""),
-                    help="x,y,w,h en px (caja de diálogo). Vacío = pantalla principal.")
+                    help="x,y,w,h opcional (más rápido). Vacío = pantalla completa.")
     ap.add_argument("--q", type=int, default=70, help="calidad JPG (red 2.4GHz Pi: 70)")
     ap.add_argument("--monitor", type=int, default=1)
     ap.add_argument("--backend", default=os.getenv("RTJPN_BACKEND", ""),
-                    help="tesseract|groq (vacío=default servidor)")
+                    help="tesseract|rapidocr|groq (vacío=default servidor)")
     ap.add_argument("--psm", type=int, default=0,
                     help="0=default servidor, 6 bloques, 7 línea única")
     ap.add_argument("--timeout", type=int, default=180,

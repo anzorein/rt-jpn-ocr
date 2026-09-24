@@ -14,12 +14,25 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 API = os.getenv("API_URL", "http://127.0.0.1:8000/api/ocr")
 WEB = os.getenv("WEB_URL", "http://192.168.10.10:8000/")
 ROI = {"value": os.getenv("RTJPN_ROI", "")}
+MODES = {}  # chat_id -> backend (default: servidor). /modo lo cambia.
 
 
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text(
         "Envíame una foto del diálogo 🎮\n"
-        "Comandos: /roi x,y,w,h (recorte) — /roi off (quitar)")
+        "Comandos: /roi x,y,w,h (recorte) — /roi off (foto completa) — "
+        "/modo tesseract|rapidocr|groq (motor OCR)")
+
+
+async def modo(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    arg = (u.message.text or "").replace("/modo", "").strip().lower()
+    if arg in ("tesseract", "rapidocr", "groq"):
+        MODES[u.effective_chat.id] = arg
+        await u.message.reply_text(f"Motor: {arg}")
+    else:
+        cur = MODES.get(u.effective_chat.id, "default servidor")
+        await u.message.reply_text(
+            f"Motor actual: {cur}\nUso: /modo tesseract|rapidocr|groq")
 
 
 async def roi(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -44,16 +57,19 @@ async def photo(u: Update, c: ContextTypes.DEFAULT_TYPE):
     params = {}
     if ROI["value"]:
         params["roi"] = ROI["value"]
+    if u.effective_chat.id in MODES:
+        params["backend"] = MODES[u.effective_chat.id]
     try:
-        async with httpx.AsyncClient(timeout=90) as h:
+        async with httpx.AsyncClient(timeout=120) as h:
             r = await h.post(API, params=params or None,
                              files={"file": ("tg.jpg", buf.getvalue(), "image/jpeg")})
             r.raise_for_status()
             d = r.json()
         txt = (d.get("text") or "(sin texto)")[:400]
         n = len(d.get("tokens") or [])
+        be = d.get("backend", "?")
         await m1.edit_text(
-            f"✅ Traducida ({n} palabras), mírala aquí:\n{WEB}\n\n```{txt}```",
+            f"✅ Traducida [{be} {d.get('ms', '?')}ms] ({n} palabras):\n{WEB}\n\n```{txt}```",
             parse_mode="Markdown")
     except Exception as e:
         await m1.edit_text(f"❌ Error: {e}")
@@ -65,6 +81,7 @@ def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("roi", roi))
+    app.add_handler(CommandHandler("modo", modo))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
     app.run_polling()
 

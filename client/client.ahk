@@ -12,9 +12,11 @@ Shoot(extra := "") {
 }
 
 ; Hotkeys globales (sin admin para ventanas no elevadas)
+; J = default servidor | T = tesseract | R = rapidocr (full-screen) | G = groq
 ^+j::Shoot()                 ; default (RTJPN_BACKEND o servidor)
-^+g::Shoot("--backend groq") ; fuerza cloud
-^+t::Shoot("--backend tesseract") ; fuerza local
+^+t::Shoot("--backend tesseract")
+^+r::Shoot("--backend rapidocr")
+^+g::Shoot("--backend groq")
 
 ; Joystick botón 1 por polling (sin foco, a nivel sistema)
 SetTimer(JoyWatch, 100)

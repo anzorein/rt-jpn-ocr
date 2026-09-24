@@ -17,7 +17,7 @@ $env:RTJPN_URL="http://192.168.10.10:8000/api/ocr"
 ```
 
 Opcional pero recomendado — recorte a la caja de diálogo
-(`x,y,w,h` en px; sin esto captura toda la pantalla y el OCR falla más):
+(`x,y,w,h` en px; con RapidOCR no hace falta, pero acelera a Tesseract):
 
 ```powershell
 $env:RTJPN_ROI="100,700,1700,300"
@@ -56,8 +56,9 @@ Override de un disparo:
 python shoot_once.py --backend groq
 ```
 
-O pegajoso por env: `$env:RTJPN_BACKEND="groq"`.
-Con AHK: `Ctrl+Shift+J` = default, `Ctrl+Shift+G` = groq, `Ctrl+Shift+T` = local.
+O pegajoso por env: `$env:RTJPN_BACKEND="rapidocr"`.
+Con AHK: `Ctrl+Shift+J` = default, `Ctrl+Shift+T` = tesseract,
+`Ctrl+Shift+R` = rapidocr, `Ctrl+Shift+G` = groq.
 
 ## Botón 📸 de la tablet (listener)
 
