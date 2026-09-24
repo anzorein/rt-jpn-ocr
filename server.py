@@ -413,7 +413,7 @@ async def api_disparar(request: Request,
     if backend:
         params["backend"] = backend
     try:
-        async with httpx.AsyncClient(timeout=10) as h:
+        async with httpx.AsyncClient(timeout=20) as h:
             r = await h.post(PC_URL, params=params or None)
         return {"ok": r.status_code == 200, "pc": r.text[:200]}
     except Exception as e:

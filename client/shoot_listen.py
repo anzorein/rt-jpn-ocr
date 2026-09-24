@@ -59,16 +59,23 @@ class H(BaseHTTPRequestHandler):
             self.send_response(401)
             self.end_headers()
             return
-        try:
-            txt = shoot(q.get("backend", [""])[0])
-            body = b"OK " + txt.encode("utf-8", "ignore")
-            self.send_response(200)
-        except Exception as e:
-            body = f"ERR {e}".encode("utf-8", "ignore")
-            self.send_response(500)
+        # ACK inmediato + proceso en background: el resultado vuelve por WS
+        # a la tablet (si esperáramos al OCR, el proxy Pi daría timeout).
+        import threading
+        be = q.get("backend", [""])[0]
+        threading.Thread(target=_bg, args=(be,), daemon=True).start()
+        body = b"OK disparada"
+        self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+
+def _bg(backend: str):
+    try:
+        print(shoot(backend), flush=True)
+    except Exception as e:
+        print(f"ERR bg: {e}", flush=True)
 
 
 if __name__ == "__main__":
