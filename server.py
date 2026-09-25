@@ -37,6 +37,11 @@ API_KEY = os.getenv("API_KEY", "")  # vacío = sin auth (dev); en prod definir
 GROQ_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
+GROQ_TEXT_MODELS = [m.strip() for m in
+                    os.getenv("GROQ_TEXT_MODELS",
+                              "openai/gpt-oss-20b,llama-3.3-70b-versatile").split(",")
+                    if m.strip()]
+_TEXT_WINNER: str | None = None  # primer modelo que responde 200, se reutiliza
 RTJPN_PC_URL = os.getenv("RTJPN_PC_URL", "http://192.168.10.15:8120/capturar")
 RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
 
@@ -460,24 +465,32 @@ async def _translate_and_push(rid: str, text: str):
 
 async def translate_en(text: str) -> str | None:
     """JA→EN vía Groq texto (solo texto a la nube, nunca capturas).
-    Sin key → None (la UI oculta la línea)."""
+    Cascada de modelos (el primero con 200 gana y se cachea).
+    Sin key o todos fallan → None (la UI oculta la línea)."""
+    global _TEXT_WINNER
     if not GROQ_KEY or not text:
         return None
     import httpx
-    try:
-        async with httpx.AsyncClient(timeout=15) as h:
-            r = await h.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_KEY}"},
-                json={"model": GROQ_TEXT_MODEL, "temperature": 0,
-                      "max_tokens": 512,
-                      "messages": [{"role": "user", "content":
-                          "Translate this Japanese videogame dialogue to English. "
-                          "Output only the translation, no explanations: " + text}]})
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return None
+    order = ([_TEXT_WINNER] if _TEXT_WINNER else []) + \
+        [m for m in GROQ_TEXT_MODELS if m != _TEXT_WINNER]
+    for model in order:
+        try:
+            async with httpx.AsyncClient(timeout=15) as h:
+                r = await h.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {GROQ_KEY}"},
+                    json={"model": model, "temperature": 0,
+                          "max_tokens": 512,
+                          "messages": [{"role": "user", "content":
+                              "Translate this Japanese videogame dialogue to English. "
+                              "Output only the translation, no explanations: " + text}]})
+                if r.status_code != 200:
+                    continue
+                _TEXT_WINNER = model
+                return r.json()["choices"][0]["message"]["content"].strip()
+        except Exception:
+            continue
+    return None
 
 
 @app.get("/api/translate")
