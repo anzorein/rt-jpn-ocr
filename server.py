@@ -36,8 +36,37 @@ OCR_UPSCALE = int(os.getenv("OCR_UPSCALE", "2"))  # 3 para texto chico en ROI
 API_KEY = os.getenv("API_KEY", "")  # vacío = sin auth (dev); en prod definir
 GROQ_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
 RTJPN_PC_URL = os.getenv("RTJPN_PC_URL", "http://192.168.10.15:8120/capturar")
 RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
+
+
+def _pc_base() -> str:
+    return RTJPN_PC_URL.rsplit("/capturar", 1)[0].rstrip("/")
+
+
+async def pc_alive(timeout: float = 1.5) -> bool:
+    """Presence-check: ¿PC prendida? Rápido, sin OCR."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as h:
+            r = await h.get(_pc_base() + "/ping")
+            return r.status_code == 200
+    except Exception:
+        return False
+
+
+async def pc_ocr(raw: bytes) -> str:
+    """OCR en PC (RapidOCR local allá). Timeout amplio: si hay ping, hay espera."""
+    import httpx
+    params = {}
+    if RTJPN_PC_KEY:
+        params["key"] = RTJPN_PC_KEY
+    async with httpx.AsyncClient(timeout=30) as h:
+        r = await h.post(_pc_base() + "/ocr", params=params or None,
+                         files={"file": ("cap.jpg", raw, "image/jpeg")})
+        r.raise_for_status()
+        return r.json().get("text", "")
 BASE = Path(__file__).parent
 LAST_RESULT: dict = {}
 _RATE: dict = {}  # ip -> [timestamps] rate-limit simple anti-spam LAN
@@ -314,7 +343,8 @@ def make_test_image(text: str = "日本語テスト") -> Image.Image:
 async def health():
     return {"ok": True, "cv2": HAS_CV2, "tesseract": HAS_TESS,
             "backend": OCR_BACKEND, "gen": gen_version(),
-            "groq": bool(GROQ_KEY), "auth": bool(API_KEY)}
+            "groq": bool(GROQ_KEY), "auth": bool(API_KEY),
+            "pc": await pc_alive()}
 
 
 @app.get("/api/parse")
@@ -357,6 +387,7 @@ async def api_ocr(
             pass
     be = (backend or OCR_BACKEND).lower()
     psm = psm if psm != 6 else OCR_PSM  # ?psm= explícito gana, si no env
+    ocr_by = "pi"
     import time
     t0 = time.time()
     if be == "groq":
@@ -371,17 +402,29 @@ async def api_ocr(
         async with OCR_LOCK:
             text = await asyncio.to_thread(ocr_dispatch, proc, psm)
     elif be == "rapidocr":
-        # Local rápido, full-screen friendly: imagen a color, downscale si enorme
+        # Routing PC-first con presence-check: ping 1.5s (barato) → si la PC
+        # está, OCR allá (1-2s); si no, local Pi. Automático, sin toggle.
         rimg = img.copy()
         if max(rimg.size) > 1568:
             rimg.thumbnail((1568, 1568), Image.LANCZOS)
-        try:
-            async with OCR_LOCK:
-                text = await asyncio.to_thread(ocr_rapid, rimg)
-        except ImportError:
-            from fastapi import HTTPException
-            raise HTTPException(501, "modo rapidocr no instalado en la Pi "
-                                     "(pip install rapidocr-onnxruntime, Pi OS 64-bit)")
+        ocr_by = "pi"
+        if await pc_alive():
+            buf = io.BytesIO()
+            rimg.save(buf, "JPEG", quality=80)
+            try:
+                async with OCR_LOCK:
+                    text = await pc_ocr(buf.getvalue())
+                ocr_by = "pc"
+            except Exception:
+                ocr_by = "pi"
+        if ocr_by == "pi":
+            try:
+                async with OCR_LOCK:
+                    text = await asyncio.to_thread(ocr_rapid, rimg)
+            except ImportError:
+                from fastapi import HTTPException
+                raise HTTPException(501, "modo rapidocr no instalado en la Pi "
+                                         "(pip install rapidocr-onnxruntime, Pi OS 64-bit)")
     else:
         from fastapi import HTTPException
         raise HTTPException(400, f"backend desconocido: {be} (tesseract|rapidocr|groq)")
@@ -389,14 +432,62 @@ async def api_ocr(
     t1 = time.time()
     toks = await asyncio.to_thread(tokenize, text) if text else []
     dict_ms = int((time.time() - t1) * 1000)
-    res = {"text": text, "tokens": toks, "v": gen_version(),
-           "backend": be, "ms": ocr_ms + dict_ms,
+    import time as _t
+    rid = f"{int(_t.time()*1000)}"
+    res = {"id": rid, "text": text, "tokens": toks, "v": gen_version(),
+           "backend": be, "ocr_by": ocr_by,
+           "ms": ocr_ms + dict_ms,
            "ocr_ms": ocr_ms, "dict_ms": dict_ms,
-           "psm": psm if be == "tesseract" else None}
+           "psm": psm if be == "tesseract" else None,
+           "translation": None}
     global LAST_RESULT
     LAST_RESULT = res
     await hub.broadcast(res)
+    if text:
+        # Fase 2 (no bloquea la lectura): traducción EN llega como update {id}.
+        asyncio.create_task(_translate_and_push(rid, text))
     return res
+
+
+async def _translate_and_push(rid: str, text: str):
+    t = await translate_en(text)
+    if t is None:
+        return
+    if LAST_RESULT.get("id") == rid:
+        LAST_RESULT["translation"] = t
+    await hub.broadcast({"id": rid, "translation": t})
+
+
+async def translate_en(text: str) -> str | None:
+    """JA→EN vía Groq texto (solo texto a la nube, nunca capturas).
+    Sin key → None (la UI oculta la línea)."""
+    if not GROQ_KEY or not text:
+        return None
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15) as h:
+            r = await h.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_KEY}"},
+                json={"model": GROQ_TEXT_MODEL, "temperature": 0,
+                      "max_tokens": 512,
+                      "messages": [{"role": "user", "content":
+                          "Translate this Japanese videogame dialogue to English. "
+                          "Output only the translation, no explanations: " + text}]})
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return None
+
+
+@app.get("/api/translate")
+async def api_translate(text: str = Query(..., min_length=1, max_length=500)):
+    """Traduce bajo demanda (botón ↻ futuro / reintentos)."""
+    t = await translate_en(text)
+    if t is None:
+        from fastapi import HTTPException
+        raise HTTPException(501, "traducción no configurada (GROQ_API_KEY)")
+    return {"text": text, "translation": t}
 
 
 @app.post("/api/disparar")

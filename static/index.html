@@ -25,7 +25,8 @@ body{margin:0;background:#111;color:#eee;font-family:sans-serif;-webkit-tap-high
 .chip .stale{color:#fa0;flex:none}
 .chip button{background:none;border:0;color:#888;font-size:.9rem;padding:0 2px}
 .chip button.fav-on{color:#fd0}
-#sent{font-size:2rem;line-height:2.8rem;padding:18px;word-break:break-all;min-height:40vh}
+#sent{font-size:2rem;line-height:2.8rem;padding:18px 18px 4px;word-break:break-all;min-height:30vh}
+#trans{display:none;font-size:1.15rem;line-height:1.7rem;padding:4px 18px 18px;color:#bcd;font-style:italic}
 ruby{cursor:pointer;border-bottom:1px solid #444;padding:0 1px}
 ruby:hover{background:#222}
 rt{font-size:.9rem;color:#8ab4ff}
@@ -39,39 +40,40 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 </style>
 </head>
 <body>
-<div id="bar"><div id="dot"></div><span id="st">conectando…</span>
-<button id="b-cam" title="Capturar PC">📸</button>
-<button id="b-be" title="Backend">G</button>
-<button id="b-key" title="Clave API">🔑</button>
-<button id="b-say" title="Leer oración">🔊</button>
-<button id="b-regen" title="Regenerar análisis">↻</button>
-<button id="b-hist" title="Historial">🕘</button>
+<div id="bar"><div id="dot"></div><span id="st">connecting…</span>
+<button id="b-cam" title="Capture on PC">📸</button>
+<button id="b-be" title="OCR engine">R</button>
+<button id="b-key" title="API key">🔑</button>
+<button id="b-say" title="Read sentence aloud">🔊</button>
+<button id="b-regen" title="Re-analyze">↻</button>
+<button id="b-hist" title="History">🕘</button>
 </div>
 <div id="histbar">
-<button id="s-desc" class="act">Fecha ↓</button>
-<button id="s-asc">Fecha ↑</button>
-<button id="s-fav">⭐ Solo fav</button>
-<select id="s-page" title="Por página">
+<button id="s-desc" class="act">Date ↓</button>
+<button id="s-asc">Date ↑</button>
+<button id="s-fav">⭐ Starred</button>
+<select id="s-page" title="Per page">
 <option value="10">10</option>
 <option value="20" selected>20</option>
 <option value="50">50</option>
 </select>
 <button id="pg-prev">‹</button><span id="pg-info"></span><button id="pg-next">›</button>
-<button id="s-clear" style="margin-left:auto">🗑 Todo</button>
+<button id="s-clear" style="margin-left:auto">🗑 All</button>
 </div>
 <div id="hist"></div>
-<div id="sent">Esperando captura… (PC: hotkey, o foto al bot)</div>
+<div id="sent">Waiting for capture… (PC hotkey, 📸 button, or photo to the bot)</div>
+<div id="trans"></div>
 <div id="card"><div class="row"><button id="c-say">🔊</button><h2 id="c-w"></h2>
-<button id="c-fav" title="Favorita">☆</button>
+<button id="c-fav" title="Star (protects from auto-delete)">☆</button>
 <button id="c-x" style="margin-left:auto">✕</button></div>
 <div class="rd" id="c-r"></div><ol id="c-g"></ol></div>
 <footer>Dictionary data: JMdict/EDRDG © CC BY-SA — <span id="cnt"></span></footer>
 <script>
-/* Store: IndexedDB 100MB, caché full {id,ts,text,result,v,fav}.
-   Eviction LRU que salta favoritas. Política aislada en evict() para
-   cambiarla sin tocar la UI. */
+/* Store: IndexedDB 100MB, full cache {id,ts,text,result,v,fav,translation}.
+   LRU eviction skips starred. Policy isolated in evict() so it can
+   change without touching the UI. */
 const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024, MAX_ENTRIES=500;
-let TOKS=[], CUR=null, CUR_ENTRY=null, GEN=null, PAGE=0;
+let TOKS=[], CUR=null, CUR_ENTRY=null, CUR_ID=null, GEN=null, PAGE=0;
 const BES=["tesseract","rapidocr","groq"], BEL={tesseract:"T",rapidocr:"R",groq:"G"};
 let pref={sort:"desc",favOnly:false,pageSize:20,backend:"rapidocr",apiKey:""};
 try{Object.assign(pref,JSON.parse(localStorage.getItem("rtjpn-pref")||"{}"))}catch(e){}
@@ -83,8 +85,8 @@ function savePref(){try{localStorage.setItem("rtjpn-pref",JSON.stringify(pref))}
 function say(t){try{speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(t);u.lang="ja-JP";u.rate=0.9;
   speechSynthesis.speak(u);}catch(e){}}
-/* Fecha japonesa para inmersión (días 年月日 + 曜日).
-   ts crudo numérico intacto: el orden usa ts, no el string. */
+/* Japanese dates for immersion (年月日 + 曜日 days).
+   Raw numeric ts untouched: ordering uses ts, not the string. */
 const YOUBI=["日","月","火","水","木","金","土"];
 const P2=n=>String(n).padStart(2,"0");
 function fmtShort(ts){const d=new Date(ts);
@@ -106,9 +108,9 @@ function tx(mode,fn){return db().then(d=>new Promise((res,rej)=>{
   const t=d.transaction("history",mode),s=t.objectStore("history"),rq=fn(s);
   t.oncomplete=()=>res(rq&&rq.result);t.onerror=e=>rej(e);}));}
 async function evict(){
-  // LRU: borra no-favoritas más viejas hasta quedar bajo cuota Y bajo
-  // MAX_ENTRIES. Si todo es favorito, no borra y avisa.
-  // ts crudo intacto: solo se eliminan registros completos.
+  // LRU: delete oldest non-starred until under quota AND under
+  // MAX_ENTRIES. If all starred, don't delete, warn.
+  // Raw ts untouched: only whole records are deleted.
   const all0=await tx("readonly",s=>s.index("ts").getAll());
   let over = all0.filter(r=>!r.fav);
   if(all0.length>MAX_ENTRIES){
@@ -128,11 +130,11 @@ async function evict(){
     await tx("readwrite",s=>s.delete(r.id)); freed=true;
     try{const e2=await navigator.storage.estimate();if((e2.usage||0)<MAX_BYTES)break;}catch(e2){break;}
   }
-  if(!freed)$("st").textContent="historial lleno (todo favorito)";
+  if(!freed)$("st").textContent="history full (all starred)";
 }
-async function saveEntry(text,tokens,v){
+async function saveEntry(text,tokens,v,translation){
   const e={id:Date.now()+""+Math.floor(Math.random()*1e4),ts:Date.now(),
-    text,tokens,v:v||null,fav:false};
+    text,tokens,v:v||null,translation:translation||null,fav:false};
   await tx("readwrite",s=>s.add(e));
   try{await evict()}catch(err){}
   CUR_ENTRY=e; return e;
@@ -144,21 +146,36 @@ async function listEntries(){
   return all;
 }
 /* ---- render ---- */
+function paintTrans(t){
+  const el=$("trans");
+  if(t){el.textContent=t;el.style.display="block";}
+  else{el.textContent="";el.style.display="none";}
+}
 function render(d,entry){
   if(!d||!d.tokens)return;
   TOKS=d.tokens; GEN=d.v||GEN;
   if(entry)CUR_ENTRY=entry;
+  if(d.id)CUR_ID=d.id;
   $("sent").innerHTML="";
   TOKS.forEach((t,i)=>{const r=document.createElement("ruby");
     r.textContent=t.surface;
     if(t.reading&&t.reading!==t.surface){
       const rt=document.createElement("rt");rt.textContent=t.reading;r.appendChild(rt);}
     r.onclick=()=>show(i);$("sent").appendChild(r);});
-  $("st").textContent=(d.text?d.text.slice(0,44):"sin texto")+
-    (d.backend?` [${BEL[d.backend]||"?"}]`:"")+
+  paintTrans(d.translation);
+  const by=d.ocr_by==="pc"?" · PC":(d.ocr_by==="pi"?" · Pi":"");
+  $("st").textContent=(d.text?d.text.slice(0,44):"no text")+
+    (d.backend?` [${BEL[d.backend]||"?"}]`:"")+by+
     (d.ms!=null?` ${d.ms}ms`:"");
   $("cnt").textContent=(d.ocr_ms!=null?`ocr ${d.ocr_ms} + dict ${d.dict_ms}ms`:"")+
     (d.psm?` · psm${d.psm}`:"");
+}
+async function onTrans(m){ // phase 2: {id, translation} merges into view + history
+  if(!m||!m.id||!m.translation)return;
+  if(CUR_ID&&m.id!==CUR_ID)return;
+  paintTrans(m.translation);
+  if(CUR_ENTRY){CUR_ENTRY.translation=m.translation;
+    try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
 }
 function show(i){
   const t=TOKS[i];if(!t)return;CUR=t;
@@ -180,23 +197,24 @@ async function drawHist(){
   $("s-page").value=String(pref.pageSize);
   slice.forEach(r=>{
     const c=document.createElement("div");c.className="chip";
-    c.title=fmtFull(r.ts); // fecha japonesa completa en tooltip
+    c.title=fmtFull(r.ts); // full Japanese date in tooltip
     const stale=GEN&&r.v&&r.v!==GEN;
     c.innerHTML=`<span class="dt">${fmtShort(r.ts)}</span>`+
-      (stale?`<span class="stale" title="generador cambiado">↻</span>`:"")+
+      (stale?`<span class="stale" title="engine changed since saved">↻</span>`:"")+
       `<span class="t">${String(r.text).slice(0,30).replace(/</g,"&lt;")}</span>`;
     const bf=document.createElement("button");
     bf.textContent=r.fav?"★":"☆";if(r.fav)bf.className="fav-on";
-    bf.title="favorita (anti-borrado)";bf.onclick=async ev=>{ev.stopPropagation();
+    bf.title="Star (protects from auto-delete)";bf.onclick=async ev=>{ev.stopPropagation();
       r.fav=!r.fav;await tx("readwrite",s=>s.put(r));
       if(CUR_ENTRY&&CUR_ENTRY.id===r.id)CUR_ENTRY.fav=r.fav;
       paintFav();drawHist();};
-    const bd=document.createElement("button");bd.textContent="✕";bd.title="borrar";
+    const bd=document.createElement("button");bd.textContent="✕";bd.title="delete";
     bd.onclick=async ev=>{ev.stopPropagation();
-      if(r.fav){alert("Quita la estrella primero");return;}
+      if(r.fav){alert("Unstar it first");return;}
       await tx("readwrite",s=>s.delete(r.id));drawHist();};
-    // tap en el chip = recupera caché exacto, offline, sin servidor
-    c.onclick=()=>render({text:r.text,tokens:r.tokens,v:r.v},r);
+    // tap = exact cached copy, offline, no server
+    c.onclick=()=>{CUR_ID=r.id;
+      render({id:r.id,text:r.text,tokens:r.tokens,v:r.v,translation:r.translation},r)};
     c.appendChild(bf);c.appendChild(bd);h.appendChild(c);});
   $("s-desc").className=pref.sort==="desc"?"act":"";
   $("s-asc").className=pref.sort==="asc"?"act":"";
@@ -204,8 +222,9 @@ async function drawHist(){
 }
 async function onLive(d){
   if(!d||!d.tokens||!d.text)return;
+  if(d.id)CUR_ID=d.id;
   render(d);
-  try{await saveEntry(d.text,d.tokens,d.v);PAGE=0;drawHist();}catch(e){}
+  try{await saveEntry(d.text,d.tokens,d.v,d.translation);PAGE=0;drawHist();}catch(e){}
 }
 $("c-x").onclick=()=>$("card").style.display="none";
 $("c-say").onclick=()=>{if(CUR)say(CUR.surface)};
@@ -215,32 +234,35 @@ $("c-fav").onclick=async()=>{
   try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}
   paintFav();drawHist();};
 $("b-say").onclick=()=>{if(TOKS.length)say(TOKS.map(t=>t.surface).join(""))};
-$("b-regen").onclick=()=>{ // ↻ regenera con el backend actual (T/G)
+$("b-regen").onclick=()=>{ // ↻ re-parse + re-translate current
   const txt=CUR_ENTRY?CUR_ENTRY.text:(TOKS.length?TOKS.map(t=>t.surface).join(""):"");
   if(!txt)return;
   fetch(`/api/parse?text=${encodeURIComponent(txt)}`).then(r=>r.json()).then(async d=>{
     d.backend=pref.backend;
     render(d);GEN=d.v||GEN;
+    try{const t=await (await fetch(`/api/translate?text=${encodeURIComponent(txt)}`)).json();
+      if(t.translation){paintTrans(t.translation);
+        if(CUR_ENTRY)CUR_ENTRY.translation=t.translation;}}catch(e){}
     if(CUR_ENTRY){CUR_ENTRY.text=d.text;CUR_ENTRY.tokens=d.tokens;CUR_ENTRY.v=d.v;
       try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
-    else{try{await saveEntry(d.text,d.tokens,d.v)}catch(e){}}
+    else{try{await saveEntry(d.text,d.tokens,d.v,CUR_ENTRY?CUR_ENTRY.translation:null)}catch(e){}}
     drawHist();}).catch(()=>{});};
 function paintBe(){$("b-be").textContent=BEL[pref.backend]||"?";
   $("b-be").title="Backend: "+pref.backend+" (tap para rotar T/R/G)";}
 $("b-be").onclick=()=>{pref.backend=BES[(BES.indexOf(pref.backend)+1)%BES.length];
   savePref();paintBe();};
-$("b-key").onclick=()=>{ // 🔑 clave = mismo API_KEY de la Pi (solo para POSTs)
-  const v=prompt("API key (igual que API_KEY en la Pi, vacío = sin auth):",pref.apiKey||"");
+$("b-key").onclick=()=>{ // 🔑 key = same API_KEY as the Pi (POSTs only)
+  const v=prompt("API key (same as API_KEY on the Pi, empty = no auth):",pref.apiKey||"");
   if(v===null)return;
   pref.apiKey=v.trim();savePref();
-  $("st").textContent=pref.apiKey?"clave guardada":"sin clave";};
-$("b-cam").onclick=()=>{ // 📸 pide a la PC que capture (vía proxy Pi)
-  $("st").textContent="capturando…";
+  $("st").textContent=pref.apiKey?"key saved":"no key";};
+$("b-cam").onclick=()=>{ // 📸 ask the PC to capture (via Pi proxy)
+  $("st").textContent="capturing…";
   const q=`backend=${pref.backend}`+(pref.apiKey?`&key=${encodeURIComponent(pref.apiKey)}`:"");
   fetch(`/api/disparar?${q}`,{method:"POST"})
     .then(async r=>{
-      if(r.status===401)throw new Error("401: clave mal (botón 🔑)");
-      if(r.status===502)throw new Error("502: PC no alcanzable");
+      if(r.status===401)throw new Error("401: wrong key (🔑 button)");
+      if(r.status===502)throw new Error("502: PC unreachable");
       if(!r.ok)throw new Error(r.status);})
     .catch(e=>{$("st").textContent=String(e.message||e).replace("Error: ","");});};
 paintBe();
@@ -253,18 +275,19 @@ $("s-page").onchange=e=>{pref.pageSize=parseInt(e.target.value,10)||20;PAGE=0;sa
 $("pg-prev").onclick=()=>{if(PAGE>0){PAGE--;drawHist();}};
 $("pg-next").onclick=async()=>{const a=await listEntries();
   if((PAGE+1)*pref.pageSize<a.length){PAGE++;drawHist();}};
-$("s-clear").onclick=async()=>{ // salta favoritas, con confirmación
-  if(!confirm("¿Borrar historial no-favorito?"))return;
+$("s-clear").onclick=async()=>{ // skips starred, with confirmation
+  if(!confirm("Delete non-starred history?"))return;
   const all=await tx("readonly",s=>s.getAll());
   for(const r of all){if(!r.fav)await tx("readwrite",s=>s.delete(r.id));}
   PAGE=0;drawHist();};
 /* ---- WS ---- */
 function conn(){
   const ws=new WebSocket(`${wsProto}://${location.host}/ws`);
-  ws.onopen=()=>{$("dot").className="ok";$("st").textContent="conectado";$("cnt").textContent="en vivo";};
-  ws.onclose=()=>{$("dot").className="";$("st").textContent="reconectando…";setTimeout(conn,2000);};
+  ws.onopen=()=>{$("dot").className="ok";$("st").textContent="connected";$("cnt").textContent="live";};
+  ws.onclose=()=>{$("dot").className="";$("st").textContent="reconnecting…";setTimeout(conn,2000);};
   ws.onerror=()=>{try{ws.close()}catch(e){}};
-  ws.onmessage=e=>{try{onLive(JSON.parse(e.data))}catch(err){}};
+  ws.onmessage=e=>{try{const m=JSON.parse(e.data);
+    if(m.tokens)onLive(m);else onTrans(m);}catch(err){}};
 }
 fetch("/api/health").then(r=>r.json()).then(h=>{if(h&&h.gen)GEN=h.gen}).catch(()=>{});
 fetch("/api/last").then(r=>r.json()).then(d=>{if(d&&d.tokens&&d.tokens.length)onLive(d)}).catch(()=>{});
