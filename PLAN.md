@@ -54,15 +54,10 @@ Cliente Win: AHK v2 trigger + shoot_once.py (reemplaza keyboard/pygame residente
 - `requirements-pi.txt`, `requirements-win.txt`, `README.md`.
 - Test punta a punta: juego → PC/bot → tablet.
 
-## Estado
-- [x] Plan anotado + 7 macro + 4 blind spots + 3 mejoras (OCR swappable, cv2 por apt, ROI remoto) consolidados
-- [ ] Fase 0 (en Pi: apt + free/df + tesseract --list-langs)
-- [x] Fase 1 código (`jpn-ocr/server.py` + selftest, verificado en PC: `/health` OK, `/selftest` responde sin crash sin tesseract)
-- [x] Fase dual-backend (groq vision + ?backend= + ?key= + rate-limit + /api/disparar + listener PC + 📸/T-G tablet + AHK J/G/T; verificado: 501 sin key groq, 502 sin PC, 401 sin API_KEY)
-- [x] Fase 2 código (fugashi singletons + lru_cache + /api/parse, verificado: 6 tokens con hiragana, jamdict fallback sin crash sin DB)
-- [ ] Fase 2 en Pi (requiere `pip install -r requirements-pi.txt` con jamdict-data para glosses EN)
-- [x] Fase 3 código (WS /ws + broadcast + /api/last + static/index.html ruby/audio + IndexedDB 100MB caché full + ↻ regenerar + genVersion + ⭐ anti-borrado + orden fecha/fav + chips fecha/hora; verificado: gen en /health, WS conecta, sin romaji)
-- [x] Fase 4 código (`client/shoot_once.py` + `client.ahk` v2 + `requirements-win.txt`, verificado e2e: captura→JPG→POST 200)
-- [x] Fase 5 código (`bot/telegram_bot.py` + `USO_BOT.md`, verificado: compila, importa, sin token hardcodeado)
-- [x] Fase 6 código (`deploy/*.service` + `README.md`, verificado: sweep 17/17)
-- [ ] En Pi: apt + pip + `.env` + selftest + `systemctl enable --now jpn-ocr jpn-bot` + `git pull` por fase
+## Estado (día 1: desplegado y validado en red real)
+- [x] Fases 0-6 + dual-backend + rapidocr-JP + two-way PC-first + traducción EN + historial IndexedDB + UI EN
+- [x] En Pi: systemd jpn-ocr + jpn-bot activos; health verde (rapidocr, groq:true, auth:true, pc:true)
+- [x] Validado e2e: PC screenshot → [R] tablet; bot foto/archivo → ✅ + traducción; Tom Nook foto → 3 líneas + glosses + EN a nivel referencia
+- [x] Display multilínea ({br:true} marcadores + <br/> render + 🔊 filtra marcadores)
+- [ ] Audio 🔊 en Xiaomi Pad 2 (voz ja-JP) — prueba de usuario pendiente
+- [ ] VPN para vista remota — opcional

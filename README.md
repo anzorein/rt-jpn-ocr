@@ -11,23 +11,26 @@ AHK/Joy1/button                │ foto Telegram (bypasea la PC)
 tablet 📸 (vía proxy Pi) ──────┘
 ```
 
-La Pi hace OCR (local Tesseract o cloud Groq vision, a elección por disparo),
+La Pi orquesta OCR (routing automático PC-first con fallback local;
+motores `tesseract|rapidocr|groq`, pipeline foto dedicada con `?photo=1`),
 tokeniza con `fugashi` + `unidic-lite`, busca glosses en JMdict (`jamdict`
-SQLite local) y lo emite por WebSocket. La tablet muestra la oración en grande
-con `<ruby>` furigana; cada palabra abre tarjeta estilo Yomitan (palabra +
-hiragana + significados, **sin romaji**) con audio `ja-JP` sintetizado en la
-tablet (cero carga Pi) e historial IndexedDB offline con favoritas.
+SQLite local), traduce la oración a EN vía Groq texto (cascada, fase 2 por WS)
+y lo emite por WebSocket. La tablet muestra el texto multilínea en grande
+con `<ruby>` furigana + traducción itálica; cada palabra abre tarjeta estilo
+Yomitan (palabra + hiragana + significados, **sin romaji**) con audio `ja-JP`
+sintetizado en la tablet (cero carga Pi) e historial IndexedDB offline con
+favoritas, orden y paginación. UI en inglés.
 
 ## Estructura
 
 ```
-server.py              FastAPI + OCR dual + WS + frontend
-static/index.html      UI tablet (dark, táctil, sin romaji)
-client/shoot_once.py   captura on-demand PC (ROI + JPG q70 + POST)
-client/shoot_listen.py listener :8120 para el botón 📸 de la tablet
-client/client.ahk      triggers AHK v2 (J=default, G=groq, T=local, Joy1)
-client/USO_PC.md       guía PC
-bot/telegram_bot.py    bot fotos (/start, /roi) — corre en la Pi
+server.py              FastAPI + OCR triple + routing PC-first + WS + frontend
+static/index.html      tablet UI (EN, dark, touch, no romaji)
+client/shoot_once.py   on-demand capture PC (full-screen default, ROI opt, JPG q70)
+client/shoot_listen.py PC worker :8120 (/ping + /ocr RapidOCR + /capturar)
+client/client.ahk      AHK v2 triggers (J=default, T/R/G engines, Joy1)
+client/USO_PC.md       PC guide
+bot/telegram_bot.py    photo+document bot (/start, /roi, /modo) — runs on Pi
 bot/USO_BOT.md         guía bot
 deploy/*.service       systemd Pi
 requirements-pi.txt    deps Pi (cv2 por apt, ver abajo)

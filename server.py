@@ -264,32 +264,35 @@ def tokenize(text: str):
     except ImportError:
         kata2hira = lambda s: s
     toks = []
-    for w in tagger(text.replace("\n", "")):
-        surf = w.surface
-        try:
-            lemma = w.feature.lemma or surf
-        except Exception:
-            lemma = surf
-        # unidic trae sufijos tipo "テスト-test": normaliza a forma base
-        if "-" in lemma:
-            head, tail = lemma.split("-", 1)
-            if head and tail.isascii():
-                lemma = head
-        try:
-            kana = w.feature.pron or w.feature.kana or surf
-        except Exception:
-            kana = surf
-        try:
-            hira = kata2hira(kana) if kana else surf
-        except Exception:
-            hira = surf
-        try:
-            pos = str(w.pos).split(",")[0]
-        except Exception:
-            pos = ""
-        toks.append({"surface": surf, "lemma": lemma, "reading": hira,
-                     "pos": pos,
-                     "glosses": lookup_cached(lemma) if lemma else []})
+    for li, line in enumerate(text.replace("\r", "").split("\n")):
+        if li:
+            toks.append({"br": True})
+        for w in tagger(line):
+            surf = w.surface
+            try:
+                lemma = w.feature.lemma or surf
+            except Exception:
+                lemma = surf
+            # unidic trae sufijos tipo "テスト-test": normaliza a forma base
+            if "-" in lemma:
+                head, tail = lemma.split("-", 1)
+                if head and tail.isascii():
+                    lemma = head
+            try:
+                kana = w.feature.pron or w.feature.kana or surf
+            except Exception:
+                kana = surf
+            try:
+                hira = kata2hira(kana) if kana else surf
+            except Exception:
+                hira = surf
+            try:
+                pos = str(w.pos).split(",")[0]
+            except Exception:
+                pos = ""
+            toks.append({"surface": surf, "lemma": lemma, "reading": hira,
+                         "pos": pos,
+                         "glosses": lookup_cached(lemma) if lemma else []})
     return toks
 
 

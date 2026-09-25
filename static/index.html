@@ -157,7 +157,9 @@ function render(d,entry){
   if(entry)CUR_ENTRY=entry;
   if(d.id)CUR_ID=d.id;
   $("sent").innerHTML="";
-  TOKS.forEach((t,i)=>{const r=document.createElement("ruby");
+  TOKS.forEach((t,i)=>{
+    if(t.br){$("sent").appendChild(document.createElement("br"));return;}
+    const r=document.createElement("ruby");
     r.textContent=t.surface;
     if(t.reading&&t.reading!==t.surface){
       const rt=document.createElement("rt");rt.textContent=t.reading;r.appendChild(rt);}
@@ -178,7 +180,7 @@ async function onTrans(m){ // phase 2: {id, translation} merges into view + hist
     try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
 }
 function show(i){
-  const t=TOKS[i];if(!t)return;CUR=t;
+  const t=TOKS[i];if(!t||t.br)return;CUR=t;
   $("c-w").textContent=t.lemma||t.surface;
   $("c-r").textContent=t.reading||"";
   $("c-g").innerHTML=(t.glosses&&t.glosses.length?t.glosses:["—"])
@@ -233,7 +235,8 @@ $("c-fav").onclick=async()=>{
   CUR_ENTRY.fav=!CUR_ENTRY.fav;
   try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}
   paintFav();drawHist();};
-$("b-say").onclick=()=>{if(TOKS.length)say(TOKS.map(t=>t.surface).join(""))};
+$("b-say").onclick=()=>{const s=TOKS.filter(t=>t.surface).map(t=>t.surface).join("");
+  if(s)say(s);};
 $("b-regen").onclick=()=>{ // ↻ re-parse + re-translate current
   const txt=CUR_ENTRY?CUR_ENTRY.text:(TOKS.length?TOKS.map(t=>t.surface).join(""):"");
   if(!txt)return;
