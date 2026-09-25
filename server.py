@@ -41,6 +41,9 @@ GROQ_TEXT_MODELS = [m.strip() for m in
                     os.getenv("GROQ_TEXT_MODELS",
                               "openai/gpt-oss-20b,llama-3.3-70b-versatile").split(",")
                     if m.strip()]
+GROQ_TRANSLATE_PROMPT = os.getenv("GROQ_TRANSLATE_PROMPT") or (
+    "Translate this Japanese text to English. "
+    "Output only the translation, no explanations: ")
 _TEXT_WINNER: str | None = None  # primer modelo que responde 200, se reutiliza
 RTJPN_PC_URL = os.getenv("RTJPN_PC_URL", "http://192.168.10.15:8120/capturar")
 RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
@@ -482,8 +485,7 @@ async def translate_en(text: str) -> str | None:
                     json={"model": model, "temperature": 0,
                           "max_tokens": 512,
                           "messages": [{"role": "user", "content":
-                              "Translate this Japanese videogame dialogue to English. "
-                              "Output only the translation, no explanations: " + text}]})
+                              GROQ_TRANSLATE_PROMPT + text}]})
                 if r.status_code != 200:
                     continue
                 _TEXT_WINNER = model
