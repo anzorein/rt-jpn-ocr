@@ -515,6 +515,7 @@ async def translate_en(text: str) -> str | None:
     import httpx
     order = ([_TEXT_WINNER] if _TEXT_WINNER else []) + \
         [m for m in GROQ_TEXT_MODELS if m != _TEXT_WINNER]
+    import sys as _sys
     for model in order:
         try:
             async with httpx.AsyncClient(timeout=15) as h:
@@ -526,10 +527,21 @@ async def translate_en(text: str) -> str | None:
                           "messages": [{"role": "user", "content":
                               GROQ_TRANSLATE_PROMPT + text}]})
                 if r.status_code != 200:
+                    print(f"translate {model}: HTTP {r.status_code} "
+                          f"{r.text[:120]}", flush=True, file=_sys.stderr)
+                    continue
+                content = (r.json()["choices"][0]["message"].get("content")
+                           or "").strip()
+                if not content:
+                    # Vacío = fallo (algunos modelos devuelven "" con
+                    # inputs largos): sigue la cascada, no se guarda.
+                    print(f"translate {model}: empty content, next",
+                          flush=True, file=_sys.stderr)
                     continue
                 _TEXT_WINNER = model
-                return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception:
+                return content
+        except Exception as e:
+            print(f"translate {model}: ERR {e}", flush=True, file=_sys.stderr)
             continue
     return None
 
