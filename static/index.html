@@ -330,7 +330,6 @@ $("m-key").onclick=()=>{ // key = same API_KEY as the Pi (POSTs only)
   $("st").textContent=pref.apiKey?"key saved":"no key";};
 function paintTm(){$("m-tm").textContent="MT: "+(TML[pref.tmodel]||"?");}
 $("m-tm").onclick=()=>{pref.tmodel=TMS[(TMS.indexOf(pref.tmodel)+1)%TMS.length];
-$("m-tm").onclick=()=>{pref.tmodel=TMS[(TMS.indexOf(pref.tmodel)+1)%TMS.length];
   savePref();paintTm();};
 async function regenTranslation(){ // tap on translation = next model + regenerate
   const txt=CUR_ENTRY?CUR_ENTRY.text:toksToText();
