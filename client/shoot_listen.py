@@ -1,7 +1,7 @@
 """shoot_listen.py — listener LAN para el botón 📸 de la tablet.
 Pi /api/disparar -> POST http://PC:8120/capturar?key=... -> captura y POST a la Pi.
-Solo stdlib (+mss/pillow/requests ya instalados). ?key= obligatorio si PC_KEY definido.
-Uso: set PC_KEY=... & set RTJPN_URL=http://192.168.10.10:8000/api/ocr & python shoot_listen.py
+Solo stdlib (+mss/pillow/requests ya instalados). ?key= obligatorio si RTJPN_PC_KEY definido.
+Uso: set RTJPN_PC_KEY=... & set RTJPN_URL=http://192.168.10.10:8000/api/ocr & python shoot_listen.py
 """
 import io
 import os
@@ -13,7 +13,7 @@ import requests
 from PIL import Image
 
 PORT = int(os.getenv("PC_LISTEN_PORT", "8120"))
-PC_KEY = os.getenv("PC_KEY", "")
+RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
 RTJPN_URL = os.getenv("RTJPN_URL", "http://192.168.10.10:8000/api/ocr")
 RTJPN_KEY = os.getenv("RTJPN_KEY", "")
 RTJPN_ROI = os.getenv("RTJPN_ROI", "")
@@ -55,7 +55,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             return
         q = parse_qs(u.query)
-        if PC_KEY and q.get("key", [""])[0] != PC_KEY:
+        if RTJPN_PC_KEY and q.get("key", [""])[0] != RTJPN_PC_KEY:
             self.send_response(401)
             self.end_headers()
             return
@@ -79,5 +79,5 @@ def _bg(backend: str):
 
 
 if __name__ == "__main__":
-    print(f"escuchando en :{PORT}/capturar (key={'sí' if PC_KEY else 'no'})")
+    print(f"escuchando en :{PORT}/capturar (key={'sí' if RTJPN_PC_KEY else 'no'})")
     HTTPServer(("0.0.0.0", PORT), H).serve_forever()

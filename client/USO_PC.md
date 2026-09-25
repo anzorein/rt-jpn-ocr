@@ -65,11 +65,11 @@ Con AHK: `Ctrl+Shift+J` = default, `Ctrl+Shift+T` = tesseract,
 Para disparar capturas desde la tablet con el mando en mano:
 
 ```powershell
-$env:PC_KEY="una-clave-larga"   # compartida con la Pi (PC_KEY)
+$env:RTJPN_PC_KEY="una-clave-larga"   # compartida con la Pi (RTJPN_PC_KEY)
 python shoot_listen.py          # escucha en :8120/capturar
 ```
 
-La Pi lo llama vía `POST /api/disparar` (env `PC_LISTENER_URL` en la Pi).
+La Pi lo llama vía `POST /api/disparar` (env `RTJPN_PC_URL` en la Pi).
 Deja esta ventana abierta mientras juegas (o AHK para hotkeys).
 
 ## Notas

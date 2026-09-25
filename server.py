@@ -36,8 +36,8 @@ OCR_UPSCALE = int(os.getenv("OCR_UPSCALE", "2"))  # 3 para texto chico en ROI
 API_KEY = os.getenv("API_KEY", "")  # vacío = sin auth (dev); en prod definir
 GROQ_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-PC_URL = os.getenv("PC_LISTENER_URL", "http://192.168.10.15:8120/capturar")
-PC_KEY = os.getenv("PC_KEY", "")
+RTJPN_PC_URL = os.getenv("RTJPN_PC_URL", "http://192.168.10.15:8120/capturar")
+RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
 BASE = Path(__file__).parent
 LAST_RESULT: dict = {}
 _RATE: dict = {}  # ip -> [timestamps] rate-limit simple anti-spam LAN
@@ -408,16 +408,16 @@ async def api_disparar(request: Request,
     check_auth(key, request)
     import httpx
     params = {}
-    if PC_KEY:
-        params["key"] = PC_KEY
+    if RTJPN_PC_KEY:
+        params["key"] = RTJPN_PC_KEY
     if backend:
         params["backend"] = backend
     try:
         async with httpx.AsyncClient(timeout=20) as h:
-            r = await h.post(PC_URL, params=params or None)
+            r = await h.post(RTJPN_PC_URL, params=params or None)
         return {"ok": r.status_code == 200, "pc": r.text[:200]}
     except Exception as e:
-        raise HTTPException(502, f"PC no alcanzable ({PC_URL}): {e}")
+        raise HTTPException(502, f"PC no alcanzable ({RTJPN_PC_URL}): {e}")
 
 
 @app.get("/api/last")
