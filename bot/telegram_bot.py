@@ -13,6 +13,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 API = os.getenv("API_URL", "http://127.0.0.1:8000/api/ocr")
+API_KEY = os.getenv("API_KEY", "")  # mismo que el server (si auth:true, obligatorio)
 WEB = os.getenv("WEB_URL", "http://192.168.10.10:8000/")
 ROI = {"value": os.getenv("RTJPN_ROI", "")}
 MODES = {}  # chat_id -> backend (default: servidor). /modo lo cambia.
@@ -56,6 +57,8 @@ async def photo(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await f.download_to_memory(buf)
     m1 = await u.message.reply_text("📤 Sent to server…")
     params = {}
+    if API_KEY:
+        params["key"] = API_KEY
     if ROI["value"]:
         params["roi"] = ROI["value"]
     if u.effective_chat.id in MODES:
