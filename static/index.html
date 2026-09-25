@@ -15,6 +15,10 @@ body{margin:0;background:#111;color:#eee;font-family:sans-serif;-webkit-tap-high
 #bar button{background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:8px 10px;font-size:1rem}
 #histbar{display:none;gap:6px;padding:8px 12px;background:#0a0a0a;flex-wrap:wrap;align-items:center}
 #histbar.on{display:flex}
+#menu{display:none;gap:6px;padding:8px 12px;background:#0a0a0a;flex-wrap:wrap;align-items:center}
+#menu.on{display:flex}
+#menu button{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:8px;padding:8px 10px;font-size:.85rem}
+#trans-model{display:none;font-size:.7rem;color:#666;padding:0 18px}
 #histbar button{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:8px;padding:6px 8px;font-size:.8rem}
 #histbar button.act{background:#333;color:#fff;border-color:#8ab4ff}
 #hist{display:none;gap:6px;padding:0 12px 12px;flex-wrap:wrap}
@@ -44,11 +48,14 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 <body>
 <div id="bar"><div id="dot"></div><span id="st">connecting…</span>
 <button id="b-cam" title="Capture on PC">📸</button>
-<button id="b-be" title="OCR engine">R</button>
-<button id="b-key" title="API key">🔑</button>
 <button id="b-say" title="Read sentence aloud">🔊</button>
-<button id="b-regen" title="Re-analyze">↻</button>
 <button id="b-hist" title="History">🕘</button>
+<button id="b-menu" title="Settings">⚙️</button>
+</div>
+<div id="menu">
+<button id="m-be" title="OCR engine (tap to cycle)">OCR: R</button>
+<button id="m-tm" title="Translation model (tap to cycle)">MT: qwen</button>
+<button id="m-key" title="API key">🔑 key</button>
 </div>
 <div id="histbar">
 <button id="s-desc" class="act">Date ↓</button>
@@ -66,6 +73,7 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 <div id="sent">Waiting for capture… (PC hotkey, 📸 button, or photo to the bot)</div>
 <div id="edited-tag">✏️ edited by hand</div>
 <div id="trans"></div>
+<div id="trans-model"></div>
 <div id="card"><div class="row"><button id="c-say">🔊</button><h2 id="c-w"></h2>
 <button id="c-fav" title="Star (protects from auto-delete)">☆</button>
 <button id="c-edit" title="Edit this word">✏️</button>
@@ -79,11 +87,15 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024, MAX_ENTRIES=500;
 let TOKS=[], CUR=null, CUR_I=-1, CUR_ENTRY=null, CUR_ID=null, GEN=null, PAGE=0;
 const BES=["tesseract","rapidocr","groq"], BEL={tesseract:"T",rapidocr:"R",groq:"G",manual:"✏️"};
+const TMS=["qwen/qwen3.8-27b","openai/gpt-oss-120b","openai/gpt-oss-20b"];
+const TML={"qwen/qwen3.8-27b":"qwen","openai/gpt-oss-120b":"120b","openai/gpt-oss-20b":"20b"};
 const CONF_THRESH=0.85; // líneas bajo esto se subrayan como sospechosas
-let pref={sort:"desc",favOnly:false,pageSize:20,backend:"rapidocr",apiKey:""};
+let pref={sort:"desc",favOnly:false,pageSize:20,backend:"rapidocr",apiKey:"",
+  tmodel:"qwen/qwen3.8-27b"};
 try{Object.assign(pref,JSON.parse(localStorage.getItem("rtjpn-pref")||"{}"))}catch(e){}
 if(![10,20,50].includes(pref.pageSize))pref.pageSize=20;
 if(!BES.includes(pref.backend))pref.backend="rapidocr";
+if(!TMS.includes(pref.tmodel))pref.tmodel=TMS[0];
 const $=id=>document.getElementById(id);
 const wsProto=location.protocol==="https:"?"wss":"ws";
 function savePref(){try{localStorage.setItem("rtjpn-pref",JSON.stringify(pref))}catch(e){}}
@@ -179,6 +191,7 @@ function render(d,entry){
     if(cf!=null&&cf<CONF_THRESH)r.className="sus"; // low-confidence line
     r.onclick=()=>show(i);$("sent").appendChild(r);});
   paintTrans(d.translation);
+  $("trans-model").textContent=""; // model unknown until tap-to-cycle regen
   $("edited-tag").style.display=d.edited?"block":"none";
   const by=d.ocr_by==="pc"?" · PC":(d.ocr_by==="pi"?" · Pi":
     (d.ocr_by?` · ${d.ocr_by}`:""));
@@ -192,6 +205,7 @@ async function onTrans(m){ // phase 2: {id, translation} merges into view + hist
   if(!m||!m.id||!m.translation)return;
   if(CUR_ID&&m.id!==CUR_ID)return;
   paintTrans(m.translation);
+  $("trans-model").textContent=""; // auto winner unknown; tap translation to pick
   if(CUR_ENTRY){CUR_ENTRY.translation=m.translation;
     try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
 }
@@ -306,30 +320,35 @@ $("c-fav").onclick=async()=>{
   paintFav();drawHist();};
 $("b-say").onclick=()=>{const s=TOKS.filter(t=>t.surface).map(t=>t.surface).join("");
   if(s)say(s);};
-$("b-regen").onclick=()=>{ // ↻ re-parse + re-translate current
-  const txt=CUR_ENTRY?CUR_ENTRY.text:(TOKS.length?TOKS.map(t=>t.surface).join(""):"");
-  if(!txt)return;
-  fetch(`/api/parse?text=${encodeURIComponent(txt)}`).then(r=>r.json()).then(async d=>{
-    d.backend=pref.backend;
-    render(d);GEN=d.v||GEN;
-    try{const t=await (await fetch(`/api/translate?text=${encodeURIComponent(txt)}`)).json();
-      if(t.translation){paintTrans(t.translation);
-        if(CUR_ENTRY)CUR_ENTRY.translation=t.translation;}}catch(e){}
-    if(CUR_ENTRY){CUR_ENTRY.text=d.text;CUR_ENTRY.tokens=d.tokens;CUR_ENTRY.v=d.v;
-      try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
-    else{try{await saveEntry(Object.assign({},d,{text:d.text}),
-      {edited:!!(CUR_ENTRY&&CUR_ENTRY.edited),
-       orig_text:CUR_ENTRY?CUR_ENTRY.orig_text:null})}catch(e){}}
-    drawHist();}).catch(()=>{});};
-function paintBe(){$("b-be").textContent=BEL[pref.backend]||"?";
-  $("b-be").title="Backend: "+pref.backend+" (tap para rotar T/R/G)";}
-$("b-be").onclick=()=>{pref.backend=BES[(BES.indexOf(pref.backend)+1)%BES.length];
+function paintBe(){$("m-be").textContent="OCR: "+(BEL[pref.backend]||"?");}
+$("m-be").onclick=()=>{pref.backend=BES[(BES.indexOf(pref.backend)+1)%BES.length];
   savePref();paintBe();};
-$("b-key").onclick=()=>{ // 🔑 key = same API_KEY as the Pi (POSTs only)
+$("m-key").onclick=()=>{ // key = same API_KEY as the Pi (POSTs only)
   const v=prompt("API key (same as API_KEY on the Pi, empty = no auth):",pref.apiKey||"");
   if(v===null)return;
   pref.apiKey=v.trim();savePref();
   $("st").textContent=pref.apiKey?"key saved":"no key";};
+function paintTm(){$("m-tm").textContent="MT: "+(TML[pref.tmodel]||"?");}
+$("m-tm").onclick=()=>{pref.tmodel=TMS[(TMS.indexOf(pref.tmodel)+1)%TMS.length];
+$("m-tm").onclick=()=>{pref.tmodel=TMS[(TMS.indexOf(pref.tmodel)+1)%TMS.length];
+  savePref();paintTm();};
+async function regenTranslation(){ // tap on translation = next model + regenerate
+  const txt=CUR_ENTRY?CUR_ENTRY.text:toksToText();
+  if(!txt)return;
+  pref.tmodel=TMS[(TMS.indexOf(pref.tmodel)+1)%TMS.length];
+  savePref();paintTm();
+  $("trans-model").textContent="via "+(TML[pref.tmodel]||"?")+"…";
+  try{
+    const t=await (await fetch(`/api/translate?text=${encodeURIComponent(txt)}&model=${encodeURIComponent(pref.tmodel)}`)).json();
+    if(t.translation){paintTrans(t.translation);
+      $("trans-model").textContent="via "+(TML[pref.tmodel]||pref.tmodel);
+      if(CUR_ENTRY){CUR_ENTRY.translation=t.translation;
+        try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}}
+    else{$("trans-model").textContent="model failed, try again";}
+  }catch(e){$("trans-model").textContent="model failed, try again";}
+}
+$("trans").onclick=()=>regenTranslation();
+$("b-menu").onclick=()=>{$("menu").classList.toggle("on");};
 $("b-cam").onclick=()=>{ // 📸 ask the PC to capture (via Pi proxy)
   $("st").textContent="capturing…";
   const q=`backend=${pref.backend}`+(pref.apiKey?`&key=${encodeURIComponent(pref.apiKey)}`:"");
@@ -339,7 +358,7 @@ $("b-cam").onclick=()=>{ // 📸 ask the PC to capture (via Pi proxy)
       if(r.status===502)throw new Error("502: PC unreachable");
       if(!r.ok)throw new Error(r.status);})
     .catch(e=>{$("st").textContent=String(e.message||e).replace("Error: ","");});};
-paintBe();
+paintBe();paintTm();
 $("b-hist").onclick=()=>{const on=$("hist").classList.toggle("on");
   $("histbar").classList.toggle("on",on);if(on)drawHist();};
 $("s-desc").onclick=()=>{pref.sort="desc";PAGE=0;savePref();drawHist();};

@@ -583,45 +583,57 @@ async def translate_en(text: str, readings: set | None = None) -> str | None:
     import httpx
     order = ([_TEXT_WINNER] if _TEXT_WINNER else []) + \
         [m for m in GROQ_TEXT_MODELS if m != _TEXT_WINNER]
-    import sys as _sys
     for model in order:
-        try:
-            async with httpx.AsyncClient(timeout=15) as h:
-                r = await h.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_KEY}"},
-                    json={"model": model, "temperature": 0,
-                          "max_tokens": 512,
-                          "messages": [{"role": "user", "content":
-                              GROQ_TRANSLATE_PROMPT + text}]})
-                if r.status_code != 200:
-                    print(f"translate {model}: HTTP {r.status_code} "
-                          f"{r.text[:120]}", flush=True, file=_sys.stderr)
-                    continue
-                content = (r.json()["choices"][0]["message"].get("content")
-                           or "").strip()
-                if not content:
-                    # Vacío = fallo (algunos modelos devuelven "" con
-                    # inputs largos): sigue la cascada, no se guarda.
-                    print(f"translate {model}: empty content, next",
-                          flush=True, file=_sys.stderr)
-                    continue
-                _TEXT_WINNER = model
-                return content
-        except Exception as e:
-            print(f"translate {model}: ERR {e}", flush=True, file=_sys.stderr)
-            continue
+        content = await translate_one(model, text)
+        if content:
+            _TEXT_WINNER = model
+            return content
     return None
 
 
 @app.get("/api/translate")
-async def api_translate(text: str = Query(..., min_length=1, max_length=500)):
-    """Traduce bajo demanda (botón ↻ futuro / reintentos)."""
+async def api_translate(text: str = Query(..., min_length=1, max_length=500),
+                        model: str = Query("", description="modelo puntual (vacío=cascada)")):
+    """Traduce bajo demanda. ?model= fuerza un modelo (para comparar)."""
+    if model:
+        if not GROQ_KEY:
+            from fastapi import HTTPException
+            raise HTTPException(501, "traducción no configurada (GROQ_API_KEY)")
+        t = await translate_one(model.strip(), text)
+        if t is None:
+            from fastapi import HTTPException
+            raise HTTPException(502, f"modelo {model} no respondió")
+        return {"text": text, "translation": t, "model": model}
     t = await translate_en(text)
     if t is None:
         from fastapi import HTTPException
         raise HTTPException(501, "traducción no configurada (GROQ_API_KEY)")
     return {"text": text, "translation": t}
+
+
+async def translate_one(model: str, text: str) -> str | None:
+    """Un intento contra un modelo: contenido no vacío o None."""
+    import httpx
+    import sys as _sys
+    try:
+        async with httpx.AsyncClient(timeout=15) as h:
+            r = await h.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_KEY}"},
+                json={"model": model, "temperature": 0,
+                      "max_tokens": 512,
+                      "messages": [{"role": "user", "content":
+                          GROQ_TRANSLATE_PROMPT + text}]})
+            if r.status_code != 200:
+                print(f"translate {model}: HTTP {r.status_code} "
+                      f"{r.text[:120]}", flush=True, file=_sys.stderr)
+                return None
+            content = (r.json()["choices"][0]["message"].get("content")
+                       or "").strip()
+            return content or None
+    except Exception as e:
+        print(f"translate {model}: ERR {e}", flush=True, file=_sys.stderr)
+        return None
 
 
 @app.post("/api/correct")
