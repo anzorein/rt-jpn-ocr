@@ -69,7 +69,7 @@ async def _process(u: Update, c: ContextTypes.DEFAULT_TYPE, f):
     buf = io.BytesIO()
     await f.download_to_memory(buf)
     m1 = await u.message.reply_text("📤 Sent to server…")
-    params = {}
+    params = {"photo": "1"}  # fotos TV/móvil: pipeline contraste+det sensible
     if API_KEY:
         params["key"] = API_KEY
     if ROI["value"]:

@@ -25,17 +25,56 @@ import requests
 from PIL import Image
 
 _RAPID = None
+_RAPID_PHOTO = None
+_MODEL_DIR = os.path.join(os.path.expanduser("~"), ".rtjpn_models")
+_REC_URL = ("https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/"
+            "v3.9.2/onnx/PP-OCRv4/rec/japan_PP-OCRv4_rec_mobile.onnx")
+_DICT_URL = ("https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/"
+             "v3.9.2/paddle/PP-OCRv4/rec/japan_PP-OCRv4_rec_mobile/japan_dict.txt")
 
 
-def rapid_text(pil_img: Image.Image) -> str:
-    """OCR RapidOCR local PC (rápido). Requiere pip install rapidocr-onnxruntime."""
-    global _RAPID
-    if _RAPID is None:
+def _dl(url: str, path: str, min_bytes: int) -> str:
+    import urllib.request
+    if os.path.exists(path) and os.path.getsize(path) > min_bytes:
+        return path
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    urllib.request.urlretrieve(url, tmp)
+    if os.path.getsize(tmp) <= min_bytes:
+        raise RuntimeError(f"bad download: {url}")
+    os.replace(tmp, path)
+    return path
+
+
+def _eng(photo: bool):
+    global _RAPID, _RAPID_PHOTO
+    if photo and _RAPID_PHOTO is None:
         from rapidocr_onnxruntime import RapidOCR
-        import numpy as np
-        _RAPID = (RapidOCR(), np)
-    eng, np = _RAPID
-    res, _ = eng(np.array(pil_img.convert("RGB")))
+        rec = _dl(_REC_URL, os.path.join(_MODEL_DIR, "japan_rec.onnx"), 1_000_000)
+        keys = _dl(_DICT_URL, os.path.join(_MODEL_DIR, "japan_dict.txt"), 1000)
+        _RAPID_PHOTO = RapidOCR(rec_model_path=rec, rec_keys_path=keys,
+                                det_box_thresh=0.3, det_limit_side_len=960)
+    if not photo and _RAPID is None:
+        from rapidocr_onnxruntime import RapidOCR
+        rec = _dl(_REC_URL, os.path.join(_MODEL_DIR, "japan_rec.onnx"), 1_000_000)
+        keys = _dl(_DICT_URL, os.path.join(_MODEL_DIR, "japan_dict.txt"), 1000)
+        _RAPID = RapidOCR(rec_model_path=rec, rec_keys_path=keys)
+    return _RAPID_PHOTO if photo else _RAPID
+
+
+def _photo_pre(img: Image.Image) -> Image.Image:
+    from PIL import ImageFilter, ImageOps
+    w, h = img.size
+    img = img.resize((w * 2, h * 2), Image.LANCZOS)
+    img = ImageOps.autocontrast(img.convert("RGB"), cutoff=2)
+    return img.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=2))
+
+
+def rapid_text(pil_img: Image.Image, photo: bool = False) -> str:
+    """OCR RapidOCR local PC con rec JAPONÉS (default del paquete es chino)."""
+    import numpy as np
+    img = _photo_pre(pil_img) if photo else pil_img.convert("RGB")
+    res, _ = _eng(photo)(np.array(img))
     if not res:
         return ""
     lines = sorted(res, key=lambda b: b[0][0][1])
@@ -116,10 +155,15 @@ class H(BaseHTTPRequestHandler):
                 img = Image.open(io.BytesIO(data)).convert("RGB")
                 if max(img.size) > 1568:
                     img.thumbnail((1568, 1568), Image.LANCZOS)
-                return self._json({"text": rapid_text(img)})
+                t0 = __import__("time").time()
+                txt = rapid_text(img, photo=q.get("photo", [""])[0] == "1")
+                ms = int((__import__("time").time() - t0) * 1000)
+                print(f"[{ms}ms] {(txt or '(empty)')[:100]}", flush=True)
+                return self._json({"text": txt, "ms": ms})
             except ImportError:
                 return self._json({"error": "rapidocr no instalado en PC"}, 501)
             except Exception as e:
+                print(f"ERR /ocr: {e}", flush=True)
                 return self._json({"error": str(e)[:200]}, 500)
         if u.path != "/capturar":
             self.send_response(404)
@@ -129,6 +173,7 @@ class H(BaseHTTPRequestHandler):
         # a la tablet (si esperáramos al OCR, el proxy Pi daría timeout).
         import threading
         be = q.get("backend", [""])[0]
+        print(f"capturar! backend={be or 'default'}", flush=True)
         threading.Thread(target=_bg, args=(be,), daemon=True).start()
         body = b"OK disparada"
         self.send_response(200)

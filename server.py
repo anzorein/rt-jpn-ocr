@@ -64,12 +64,14 @@ async def pc_alive(timeout: float = 1.5) -> bool:
         return False
 
 
-async def pc_ocr(raw: bytes) -> str:
+async def pc_ocr(raw: bytes, photo: bool = False) -> str:
     """OCR en PC (RapidOCR local allá). Timeout amplio: si hay ping, hay espera."""
     import httpx
     params = {}
     if RTJPN_PC_KEY:
         params["key"] = RTJPN_PC_KEY
+    if photo:
+        params["photo"] = "1"
     async with httpx.AsyncClient(timeout=30) as h:
         r = await h.post(_pc_base() + "/ocr", params=params or None,
                          files={"file": ("cap.jpg", raw, "image/jpeg")})
@@ -133,6 +135,7 @@ hub = Hub()
 _TAGGER = None
 _JAM = None
 _RAPID = None
+_RAPID_PHOTO = None
 
 
 def get_tagger():
@@ -187,9 +190,36 @@ def get_rapid():
     return _RAPID
 
 
-def ocr_rapid(img: Image.Image) -> str:
-    """Full-screen friendly: detección + reconocimiento en una pasada."""
-    eng = get_rapid()
+def get_rapid_photo():
+    """Variante sensible para fotos (TV/móvil): umbral de detección bajo
+    + lado límite mayor (texto chico/borroso). Mismo rec japonés."""
+    global _RAPID_PHOTO
+    if _RAPID_PHOTO is None:
+        from rapidocr_onnxruntime import RapidOCR
+        mdir = BASE / "models"
+        rec = _dl(RAPID_REC_URL, mdir / "japan_PP-OCRv4_rec_mobile.onnx")
+        keys = _dl(RAPID_DICT_URL, mdir / "japan_dict.txt", min_bytes=1000)
+        _RAPID_PHOTO = RapidOCR(rec_model_path=str(rec), rec_keys_path=str(keys),
+                                det_box_thresh=0.3, det_limit_side_len=960)
+    return _RAPID_PHOTO
+
+
+def preprocess_photo(img: Image.Image) -> Image.Image:
+    """Normaliza fotos (texto marrón/crema + blur + moiré) antes de RapidOCR:
+    upscale 2x + contraste fuerte + unsharp. Solo PIL (determinista)."""
+    from PIL import ImageFilter
+    w, h = img.size
+    img = img.resize((w * 2, h * 2), Image.LANCZOS)
+    img = ImageOps.autocontrast(img.convert("RGB"), cutoff=2)
+    return img.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=2))
+
+
+def ocr_rapid(img: Image.Image, photo: bool = False) -> str:
+    """Full-screen friendly: detección + reconocimiento en una pasada.
+    photo=True usa engine sensible + preproceso de contraste (fotos TV/móvil)."""
+    eng = get_rapid_photo() if photo else get_rapid()
+    if photo:
+        img = preprocess_photo(img)
     if HAS_CV2:
         arr = np.array(img.convert("RGB"))
     else:
@@ -382,6 +412,7 @@ async def api_ocr(
     psm: int = Query(6),
     roi: str = Query("", description="x,y,w,h en px sobre imagen original"),
     backend: str = Query("", description="tesseract|rapidocr|groq (vacío=default)"),
+    photo: bool = Query(False, description="True=foto TV/móvil: contraste+det sensible+fallback"),
     key: str = Query(""),
 ):
     check_auth(key, request)
@@ -421,18 +452,26 @@ async def api_ocr(
             rimg.save(buf, "JPEG", quality=80)
             try:
                 async with OCR_LOCK:
-                    text = await pc_ocr(buf.getvalue())
+                    text = await pc_ocr(buf.getvalue(), photo)
                 ocr_by = "pc"
             except Exception:
                 ocr_by = "pi"
         if ocr_by == "pi":
             try:
                 async with OCR_LOCK:
-                    text = await asyncio.to_thread(ocr_rapid, rimg)
+                    text = await asyncio.to_thread(ocr_rapid, rimg, photo)
             except ImportError:
                 from fastapi import HTTPException
                 raise HTTPException(501, "modo rapidocr no instalado en la Pi "
                                          "(pip install rapidocr-onnxruntime, Pi OS 64-bit)")
+        # Fallback foto: si RapidOCR casi no leyó (<10 chars), reintenta
+        # Tesseract SIN morfología (no come kana chicos) y reporta ganador.
+        if photo and len(text) < 10:
+            proc = preprocess(img, keep_furigana=True)
+            async with OCR_LOCK:
+                t2 = await asyncio.to_thread(ocr_dispatch, proc, psm)
+            if len(t2) > len(text):
+                text, ocr_by = t2, "tesseract-fallback"
     else:
         from fastapi import HTTPException
         raise HTTPException(400, f"backend desconocido: {be} (tesseract|rapidocr|groq)")
