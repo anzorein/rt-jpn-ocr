@@ -82,6 +82,21 @@ curl localhost:8000/api/selftest   # ok=true = base lista
 
 Toggle: tablet T/R/G, PC `--backend`, bot `/modo` (precedencia: request > chat/PC > default).
 
+## Traducción EN (Groq texto, solo texto a la nube)
+
+Cascada `GROQ_TEXT_MODELS` (el primero con 200 gana y se cachea).
+Comportamiento observado en producción (2026-09, no docs):
+
+| Modelo | Rol | Notas |
+|---|---|---|
+| `qwen/qwen3.8-27b` | default rápido | fiable, nunca falla; calidad buena |
+| `openai/gpt-oss-120b` | calidad | mejor prosa; necesita `temp 0.6` + `max_tokens 2048` (razona largo) |
+| `llama-3.3-70b-versatile` | lotería | 404 en algunas keys (confirmado); queda por si Groq lo revive |
+| `openai/gpt-oss-20b` | no usar en largos | divaga sin concluir (`reasoning_len` gigante, contenido vacío) |
+
+`GROQ_TEMP_GPTOSS` (0.6) y `GROQ_MAX_GPTOSS` (2048) solo afectan familia gpt-oss.
+Veredicto del log ante fallos: `journalctl -u jpn-ocr | grep translate`.
+
 ## Deploy Pi (systemd)
 
 ```bash

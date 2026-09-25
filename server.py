@@ -40,7 +40,7 @@ GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
 GROQ_TEXT_MODELS = [m.strip() for m in
                     os.getenv("GROQ_TEXT_MODELS",
                               "qwen/qwen3.8-27b,openai/gpt-oss-120b,"
-                              "openai/gpt-oss-20b,llama-3.3-70b-versatile").split(",")
+                              "llama-3.3-70b-versatile").split(",")
                     if m.strip()]
 GROQ_TRANSLATE_PROMPT = os.getenv("GROQ_TRANSLATE_PROMPT") or (
     "Translate this Japanese text into natural, idiomatic English that "

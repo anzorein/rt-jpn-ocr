@@ -92,8 +92,8 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024, MAX_ENTRIES=500;
 let TOKS=[], CUR=null, CUR_I=-1, CUR_ENTRY=null, CUR_ID=null, GEN=null, PAGE=0;
 const BES=["tesseract","rapidocr","groq"], BEL={tesseract:"T",rapidocr:"R",groq:"G",manual:"✏️"};
-const TMS=["qwen/qwen3.8-27b","openai/gpt-oss-120b","openai/gpt-oss-20b"];
-const TML={"qwen/qwen3.8-27b":"qwen","openai/gpt-oss-120b":"120b","openai/gpt-oss-20b":"20b"};
+const TMS=["qwen/qwen3.8-27b","openai/gpt-oss-120b"];
+const TML={"qwen/qwen3.8-27b":"qwen","openai/gpt-oss-120b":"120b"};
 const CONF_THRESH=0.85; // líneas bajo esto se subrayan como sospechosas
 let pref={sort:"desc",favOnly:false,pageSize:20,backend:"rapidocr",apiKey:"",
   tmodel:"qwen/qwen3.8-27b"};
@@ -210,7 +210,7 @@ async function onTrans(m){ // phase 2: {id, translation} merges into view + hist
   if(!m||!m.id||!m.translation)return;
   if(CUR_ID&&m.id!==CUR_ID)return;
   paintTrans(m.translation);
-  $("trans-model").textContent=""; // auto winner unknown; tap translation to pick
+  $("trans-model").textContent=""; // auto winner unknown; see MT: in ⚙️ menu
   if(CUR_ENTRY){CUR_ENTRY.translation=m.translation;
     try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
 }
