@@ -21,7 +21,7 @@ MODES = {}  # chat_id -> backend (default: servidor). /modo lo cambia.
 
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text(
-        "Send me a photo of the dialogue 🎮\n"
+        "Send me a photo of the dialogue 🎮 (as photo or as uncompressed file)\n"
         "Commands: /roi x,y,w,h (crop) — /roi off (full) — "
         "/modo tesseract|rapidocr|groq (OCR engine)")
 
@@ -53,6 +53,19 @@ async def roi(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 async def photo(u: Update, c: ContextTypes.DEFAULT_TYPE):
     f = await u.message.photo[-1].get_file()
+    await _process(u, c, f)
+
+
+async def document(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    doc = u.message.document
+    if not (doc and (doc.mime_type or "").startswith("image/")):
+        await u.message.reply_text("Send an image file (PNG/JPG).")
+        return
+    f = await doc.get_file()
+    await _process(u, c, f)
+
+
+async def _process(u: Update, c: ContextTypes.DEFAULT_TYPE, f):
     buf = io.BytesIO()
     await f.download_to_memory(buf)
     m1 = await u.message.reply_text("📤 Sent to server…")
@@ -109,6 +122,7 @@ def main():
     app.add_handler(CommandHandler("roi", roi))
     app.add_handler(CommandHandler("modo", modo))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
+    app.add_handler(MessageHandler(filters.Document.IMAGE, document))
     app.run_polling()
 
 
