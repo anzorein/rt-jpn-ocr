@@ -54,6 +54,12 @@ def _groq_temp(model: str) -> float:
     # gpt-oss son modelos de razonamiento: con temperature 0 el contenido
     # sale vacío en inputs largos. Resto: 0 (determinista).
     return GROQ_TEMP_GPTOSS if "gpt-oss" in model else 0
+
+
+def _groq_max(model: str) -> int:
+    # El razonamiento de gpt-oss consume del mismo max_tokens: con 512 e
+    # input largo se lo come todo y content llega vacío. Resto: 512.
+    return int(os.getenv("GROQ_MAX_GPTOSS", "2048")) if "gpt-oss" in model else 512
 _TEXT_WINNER: str | None = None  # primer modelo que responde 200, se reutiliza
 RTJPN_PC_URL = os.getenv("RTJPN_PC_URL", "http://192.168.10.15:8120/capturar")
 RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
@@ -631,7 +637,7 @@ async def translate_one(model: str, text: str):
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {GROQ_KEY}"},
                 json={"model": model, "temperature": _groq_temp(model),
-                      "max_tokens": 512,
+                      "max_tokens": _groq_max(model),
                       "messages": [{"role": "user", "content":
                           GROQ_TRANSLATE_PROMPT + text}]})
             if r.status_code != 200:
@@ -642,7 +648,11 @@ async def translate_one(model: str, text: str):
             content = (r.json()["choices"][0]["message"].get("content")
                        or "").strip()
             if not content:
-                print(f"translate {model}: empty content",
+                # Vacío = fallo: loguea si hubo reasoning (presupuesto
+                # comido por el razonamiento) para distinguir de refusal.
+                rs = r.json()["choices"][0]["message"].get("reasoning") or ""
+                print(f"translate {model}: empty content "
+                      f"(reasoning_len={len(rs)})",
                       flush=True, file=_sys.stderr)
                 return None, "empty"
             return content, "ok"
