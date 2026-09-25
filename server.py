@@ -43,8 +43,10 @@ GROQ_TEXT_MODELS = [m.strip() for m in
                               "openai/gpt-oss-20b,llama-3.3-70b-versatile").split(",")
                     if m.strip()]
 GROQ_TRANSLATE_PROMPT = os.getenv("GROQ_TRANSLATE_PROMPT") or (
-    "Translate this Japanese text to English. "
-    "Output only the translation, no explanations: ")
+    "Translate this Japanese text into natural, idiomatic English that "
+    "sounds like something a native speaker would say — not word-for-word. "
+    "Preserve subtle nuances (e.g. とか marking just one example among "
+    "others); do not narrow the meaning. Output only the translation: ")
 _TEXT_WINNER: str | None = None  # primer modelo que responde 200, se reutiliza
 RTJPN_PC_URL = os.getenv("RTJPN_PC_URL", "http://192.168.10.15:8120/capturar")
 RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
@@ -493,12 +495,13 @@ async def api_ocr(
     await hub.broadcast(res)
     if text:
         # Fase 2 (no bloquea la lectura): traducción EN llega como update {id}.
-        asyncio.create_task(_translate_and_push(rid, text))
+        readings = {t.get("reading", "") for t in toks if t.get("reading")}
+        asyncio.create_task(_translate_and_push(rid, text, readings))
     return res
 
 
-async def _translate_and_push(rid: str, text: str):
-    t = await translate_en(text)
+async def _translate_and_push(rid: str, text: str, readings: set):
+    t = await translate_en(text, readings)
     if t is None:
         return
     if LAST_RESULT.get("id") == rid:
@@ -506,12 +509,38 @@ async def _translate_and_push(rid: str, text: str):
     await hub.broadcast({"id": rid, "translation": t})
 
 
-async def translate_en(text: str) -> str | None:
+def _is_hira(s: str) -> bool:
+    return bool(s) and all("ぁ" <= c <= "ゖ" or c in "ー〜" for c in s)
+
+
+def clean_for_translation(text: str, readings: set) -> str:
+    """Quita líneas de solo-lectura (furigana OCR como líneas sueltas) del
+    input del traductor. Conservador: solo hiragana puro ≤6 chars que ya
+    aparece como (parte de una) lectura de otro token. Ej: たぬきち/かた/
+    しま/なに/そうだん fuera; ありがとう (diálogo real) queda.
+    Env GROQ_CLEAN_INPUT=0 lo desactiva."""
+    if os.getenv("GROQ_CLEAN_INPUT", "1") != "1":
+        return text
+    joined = "".join(readings)
+    out = []
+    for ln in text.split("\n"):
+        s = ln.strip()
+        if (_is_hira(s) and 1 <= len(s) <= 6 and
+                (s in joined or any(len(r) >= 2 and r in s for r in readings))):
+            continue
+        out.append(ln)
+    return "\n".join(out).strip() or text
+
+
+async def translate_en(text: str, readings: set | None = None) -> str | None:
     """JA→EN vía Groq texto (solo texto a la nube, nunca capturas).
     Cascada de modelos (el primero con 200 gana y se cachea).
     Sin key o todos fallan → None (la UI oculta la línea)."""
     global _TEXT_WINNER
     if not GROQ_KEY or not text:
+        return None
+    text = clean_for_translation(text, readings or set())
+    if not text:
         return None
     import httpx
     order = ([_TEXT_WINNER] if _TEXT_WINNER else []) + \
