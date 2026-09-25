@@ -29,6 +29,8 @@ body{margin:0;background:#111;color:#eee;font-family:sans-serif;-webkit-tap-high
 #trans{display:none;font-size:1.15rem;line-height:1.7rem;padding:4px 18px 18px;color:#bcd;font-style:italic}
 ruby{cursor:pointer;border-bottom:1px solid #444;padding:0 1px}
 ruby:hover{background:#222}
+ruby.sus{border-bottom:2px solid #fa0}
+#edited-tag{display:none;font-size:.8rem;color:#fd0;padding:0 18px}
 rt{font-size:.9rem;color:#8ab4ff}
 #card{position:fixed;left:8px;right:8px;bottom:8px;background:#1e1e1e;border:1px solid #444;border-radius:12px;padding:14px;display:none;max-height:55vh;overflow:auto;box-shadow:0 8px 30px #000;z-index:10}
 #card h2{margin:0;font-size:1.6rem}
@@ -62,9 +64,11 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 </div>
 <div id="hist"></div>
 <div id="sent">Waiting for capture… (PC hotkey, 📸 button, or photo to the bot)</div>
+<div id="edited-tag">✏️ edited by hand</div>
 <div id="trans"></div>
 <div id="card"><div class="row"><button id="c-say">🔊</button><h2 id="c-w"></h2>
 <button id="c-fav" title="Star (protects from auto-delete)">☆</button>
+<button id="c-edit" title="Edit this word">✏️</button>
 <button id="c-x" style="margin-left:auto">✕</button></div>
 <div class="rd" id="c-r"></div><ol id="c-g"></ol></div>
 <footer>Dictionary data: JMdict/EDRDG © CC BY-SA — <span id="cnt"></span></footer>
@@ -73,8 +77,9 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
    LRU eviction skips starred. Policy isolated in evict() so it can
    change without touching the UI. */
 const DB="rt-jpn-ocr", MAX_BYTES=100*1024*1024, MAX_ENTRIES=500;
-let TOKS=[], CUR=null, CUR_ENTRY=null, CUR_ID=null, GEN=null, PAGE=0;
-const BES=["tesseract","rapidocr","groq"], BEL={tesseract:"T",rapidocr:"R",groq:"G"};
+let TOKS=[], CUR=null, CUR_I=-1, CUR_ENTRY=null, CUR_ID=null, GEN=null, PAGE=0;
+const BES=["tesseract","rapidocr","groq"], BEL={tesseract:"T",rapidocr:"R",groq:"G",manual:"✏️"};
+const CONF_THRESH=0.85; // líneas bajo esto se subrayan como sospechosas
 let pref={sort:"desc",favOnly:false,pageSize:20,backend:"rapidocr",apiKey:""};
 try{Object.assign(pref,JSON.parse(localStorage.getItem("rtjpn-pref")||"{}"))}catch(e){}
 if(![10,20,50].includes(pref.pageSize))pref.pageSize=20;
@@ -132,9 +137,14 @@ async function evict(){
   }
   if(!freed)$("st").textContent="history full (all starred)";
 }
-async function saveEntry(text,tokens,v,translation){
+async function saveEntry(d,extra){
+  extra=extra||{};
   const e={id:Date.now()+""+Math.floor(Math.random()*1e4),ts:Date.now(),
-    text,tokens,v:v||null,translation:translation||null,fav:false};
+    text:d.text,tokens:d.tokens,v:d.v||null,translation:d.translation||null,
+    backend:d.backend||null,ocr_by:d.ocr_by||null,ms:d.ms,ocr_ms:d.ocr_ms,
+    dict_ms:d.dict_ms,psm:d.psm,line_conf:d.line_conf||null,
+    edited:!!extra.edited,orig_text:extra.orig_text||null,
+    parent:extra.parent||null,rid:d.id||null,fav:false};
   await tx("readwrite",s=>s.add(e));
   try{await evict()}catch(err){}
   CUR_ENTRY=e; return e;
@@ -155,18 +165,24 @@ function render(d,entry){
   if(!d||!d.tokens)return;
   TOKS=d.tokens; GEN=d.v||GEN;
   if(entry)CUR_ENTRY=entry;
-  if(d.id)CUR_ID=d.id;
+  if(d.rid)CUR_ID=d.rid;else if(d.id)CUR_ID=d.id;
   $("sent").innerHTML="";
+  const confs=d.line_conf||[];
+  let li=0;
   TOKS.forEach((t,i)=>{
-    if(t.br){$("sent").appendChild(document.createElement("br"));return;}
+    if(t.br){li++;$("sent").appendChild(document.createElement("br"));return;}
     const r=document.createElement("ruby");
     r.textContent=t.surface;
     if(t.reading&&t.reading!==t.surface){
       const rt=document.createElement("rt");rt.textContent=t.reading;r.appendChild(rt);}
+    const cf=confs[li];
+    if(cf!=null&&cf<CONF_THRESH)r.className="sus"; // low-confidence line
     r.onclick=()=>show(i);$("sent").appendChild(r);});
   paintTrans(d.translation);
-  const by=d.ocr_by==="pc"?" · PC":(d.ocr_by==="pi"?" · Pi":"");
-  $("st").textContent=(d.text?d.text.slice(0,44):"no text")+
+  $("edited-tag").style.display=d.edited?"block":"none";
+  const by=d.ocr_by==="pc"?" · PC":(d.ocr_by==="pi"?" · Pi":
+    (d.ocr_by?` · ${d.ocr_by}`:""));
+  $("st").textContent=(d.edited?"✏️ ":"")+(d.text?d.text.slice(0,44):"no text")+
     (d.backend?` [${BEL[d.backend]||"?"}]`:"")+by+
     (d.ms!=null?` ${d.ms}ms`:"");
   $("cnt").textContent=(d.ocr_ms!=null?`ocr ${d.ocr_ms} + dict ${d.dict_ms}ms`:"")+
@@ -180,7 +196,7 @@ async function onTrans(m){ // phase 2: {id, translation} merges into view + hist
     try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
 }
 function show(i){
-  const t=TOKS[i];if(!t||t.br)return;CUR=t;
+  const t=TOKS[i];if(!t||t.br)return;CUR=t;CUR_I=i;
   $("c-w").textContent=t.lemma||t.surface;
   $("c-r").textContent=t.reading||"";
   $("c-g").innerHTML=(t.glosses&&t.glosses.length?t.glosses:["—"])
@@ -202,6 +218,7 @@ async function drawHist(){
     c.title=fmtFull(r.ts); // full Japanese date in tooltip
     const stale=GEN&&r.v&&r.v!==GEN;
     c.innerHTML=`<span class="dt">${fmtShort(r.ts)}</span>`+
+      (r.edited?`<span class="stale" title="hand-edited">✏️</span>`:"")+
       (stale?`<span class="stale" title="engine changed since saved">↻</span>`:"")+
       `<span class="t">${String(r.text).slice(0,30).replace(/</g,"&lt;")}</span>`;
     const bf=document.createElement("button");
@@ -215,19 +232,71 @@ async function drawHist(){
       if(r.fav){alert("Unstar it first");return;}
       await tx("readwrite",s=>s.delete(r.id));drawHist();};
     // tap = exact cached copy, offline, no server
-    c.onclick=()=>{CUR_ID=r.id;
-      render({id:r.id,text:r.text,tokens:r.tokens,v:r.v,translation:r.translation},r)};
+    c.onclick=()=>{render(r,r)};
     c.appendChild(bf);c.appendChild(bd);h.appendChild(c);});
   $("s-desc").className=pref.sort==="desc"?"act":"";
   $("s-asc").className=pref.sort==="asc"?"act":"";
   $("s-fav").className=pref.favOnly?"act":"";
 }
-async function onLive(d){
+async function onLive(d,extra){
   if(!d||!d.tokens||!d.text)return;
   if(d.id)CUR_ID=d.id;
   render(d);
-  try{await saveEntry(d.text,d.tokens,d.v,d.translation);PAGE=0;drawHist();}catch(e){}
+  try{await saveEntry(d,extra);PAGE=0;drawHist();}catch(e){}
 }
+/* ---- manual correction: token ✏️ + long-press sentence ---- */
+let PENDING_ORIG=null; // {parent, text} attached to next onLive from /api/correct
+function toksToText(){
+  return TOKS.map(t=>t.br?"\n":(t.surface||"")).join("");
+}
+async function postCorrect(text,parentId,origText){
+  if(!text)return;
+  $("st").textContent="correcting…";
+  try{
+    const r=await fetch("/api/correct",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text,key:pref.apiKey||"",parent_id:parentId||null})});
+    if(r.status===401){alert("wrong key (🔑 button)");return;}
+    if(!r.ok){alert("correct failed: "+r.status);return;}
+    PENDING_ORIG={parent:parentId,text:origText};
+  }catch(e){$("st").textContent="correct failed";}
+}
+const _origOnLive=onLive;
+onLive=async function(d,extra){
+  extra=extra||{};
+  if(d.edited&&PENDING_ORIG&&PENDING_ORIG.parent===d.parent){
+    extra.orig_text=PENDING_ORIG.text;extra.edited=true;extra.parent=d.parent;
+    PENDING_ORIG=null;
+  } else if(d.edited){extra.edited=true;}
+  await _origOnLive(d,extra);
+};
+$("c-edit").onclick=()=>{
+  if(!CUR||CUR_I<0)return;
+  const v=prompt("Correct this word:",CUR.surface||"");
+  if(v===null||v===CUR.surface)return;
+  const parts=TOKS.map(t=>t.br?"\n":(t.surface||""));
+  let ti=0;
+  for(let i=0;i<TOKS.length;i++){
+    if(TOKS[i].br)continue;
+    if(i===CUR_I){parts[i]=v;break;}
+  }
+  postCorrect(parts.join(""),CUR_ENTRY?CUR_ENTRY.id:null,toksToText());
+};
+let _lpT=null;
+$("sent").addEventListener("touchstart",()=>{
+  _lpT=setTimeout(()=>{
+    const cur=toksToText();if(!cur)return;
+    const v=prompt("Correct the sentence:",cur);
+    if(v===null||v===cur)return;
+    postCorrect(v,CUR_ENTRY?CUR_ENTRY.id:null,cur);
+  },650);},{passive:true});
+$("sent").addEventListener("touchend",()=>clearTimeout(_lpT));
+$("sent").addEventListener("dblclick",()=>{
+  const cur=toksToText();if(!cur)return;
+  const v=prompt("Correct the sentence:",cur);
+  if(v===null||v===cur)return;
+  postCorrect(v,CUR_ENTRY?CUR_ENTRY.id:null,cur);
+});
 $("c-x").onclick=()=>$("card").style.display="none";
 $("c-say").onclick=()=>{if(CUR)say(CUR.surface)};
 $("c-fav").onclick=async()=>{
@@ -248,7 +317,9 @@ $("b-regen").onclick=()=>{ // ↻ re-parse + re-translate current
         if(CUR_ENTRY)CUR_ENTRY.translation=t.translation;}}catch(e){}
     if(CUR_ENTRY){CUR_ENTRY.text=d.text;CUR_ENTRY.tokens=d.tokens;CUR_ENTRY.v=d.v;
       try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}
-    else{try{await saveEntry(d.text,d.tokens,d.v,CUR_ENTRY?CUR_ENTRY.translation:null)}catch(e){}}
+    else{try{await saveEntry(Object.assign({},d,{text:d.text}),
+      {edited:!!(CUR_ENTRY&&CUR_ENTRY.edited),
+       orig_text:CUR_ENTRY?CUR_ENTRY.orig_text:null})}catch(e){}}
     drawHist();}).catch(()=>{});};
 function paintBe(){$("b-be").textContent=BEL[pref.backend]||"?";
   $("b-be").title="Backend: "+pref.backend+" (tap para rotar T/R/G)";}

@@ -70,15 +70,25 @@ def _photo_pre(img: Image.Image) -> Image.Image:
     return img.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=2))
 
 
-def rapid_text(pil_img: Image.Image, photo: bool = False) -> str:
-    """OCR RapidOCR local PC con rec JAPONÉS (default del paquete es chino)."""
+def rapid_text(pil_img: Image.Image, photo: bool = False):
+    """OCR RapidOCR local PC con rec JAPONÉS (default del paquete es chino).
+    Devuelve (texto, conf_por_linea)."""
     import numpy as np
     img = _photo_pre(pil_img) if photo else pil_img.convert("RGB")
     res, _ = _eng(photo)(np.array(img))
     if not res:
-        return ""
-    lines = sorted(res, key=lambda b: b[0][0][1])
-    return "\n".join(t for _, t, _ in lines if t).strip()
+        return "", []
+    ordered = sorted(res, key=lambda b: b[0][0][1])
+    texts, confs = [], []
+    for _, t, s in ordered:
+        if not t:
+            continue
+        texts.append(t)
+        try:
+            confs.append(round(float(s if not isinstance(s, (list, tuple)) else s[0]), 3))
+        except Exception:
+            confs.append(None)
+    return "\n".join(texts).strip(), confs
 
 PORT = int(os.getenv("PC_LISTEN_PORT", "8120"))
 RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
@@ -156,10 +166,10 @@ class H(BaseHTTPRequestHandler):
                 if max(img.size) > 1568:
                     img.thumbnail((1568, 1568), Image.LANCZOS)
                 t0 = __import__("time").time()
-                txt = rapid_text(img, photo=q.get("photo", [""])[0] == "1")
+                txt, confs = rapid_text(img, photo=q.get("photo", [""])[0] == "1")
                 ms = int((__import__("time").time() - t0) * 1000)
                 print(f"[{ms}ms] {(txt or '(empty)')[:100]}", flush=True)
-                return self._json({"text": txt, "ms": ms})
+                return self._json({"text": txt, "ms": ms, "line_conf": confs})
             except ImportError:
                 return self._json({"error": "rapidocr no instalado en PC"}, 501)
             except Exception as e:

@@ -67,8 +67,9 @@ async def pc_alive(timeout: float = 1.5) -> bool:
         return False
 
 
-async def pc_ocr(raw: bytes, photo: bool = False) -> str:
-    """OCR en PC (RapidOCR local allá). Timeout amplio: si hay ping, hay espera."""
+async def pc_ocr(raw: bytes, photo: bool = False):
+    """OCR en PC (RapidOCR local allá). Timeout amplio: si hay ping, hay espera.
+    Devuelve (texto, conf_por_linea)."""
     import httpx
     params = {}
     if RTJPN_PC_KEY:
@@ -79,7 +80,8 @@ async def pc_ocr(raw: bytes, photo: bool = False) -> str:
         r = await h.post(_pc_base() + "/ocr", params=params or None,
                          files={"file": ("cap.jpg", raw, "image/jpeg")})
         r.raise_for_status()
-        return r.json().get("text", "")
+        d = r.json()
+        return d.get("text", ""), d.get("line_conf")
 BASE = Path(__file__).parent
 LAST_RESULT: dict = {}
 _RATE: dict = {}  # ip -> [timestamps] rate-limit simple anti-spam LAN
@@ -209,17 +211,37 @@ def get_rapid_photo():
 
 def preprocess_photo(img: Image.Image) -> Image.Image:
     """Normaliza fotos (texto marrón/crema + blur + moiré) antes de RapidOCR:
-    upscale 2x + contraste fuerte + unsharp. Solo PIL (determinista)."""
-    from PIL import ImageFilter
+    upscale 2x + contraste fuerte + unsharp. Polaridad: si el fondo es claro
+    con texto claro (blanco sobre azul), invierte a oscuro-sobre-claro.
+    Solo PIL (determinista)."""
+    from PIL import ImageFilter, ImageStat
     w, h = img.size
-    img = img.resize((w * 2, h * 2), Image.LANCZOS)
-    img = ImageOps.autocontrast(img.convert("RGB"), cutoff=2)
+    img = img.resize((w * 2, h * 2), Image.LANCZOS).convert("RGB")
+    if not _ink_dark(img):
+        img = ImageOps.invert(img)  # tinta clara sobre fondo oscuro → normaliza
+    img = ImageOps.autocontrast(img, cutoff=2)
     return img.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=2))
 
 
-def ocr_rapid(img: Image.Image, photo: bool = False) -> str:
+def _ink_dark(img: Image.Image) -> bool:
+    """Heurística barata: ¿la tinta es más oscura que el fondo?
+    Compara media de bordes (fondo) vs percentil oscuro (tinta)."""
+    g = ImageOps.grayscale(img)
+    w, h = g.size
+    border = [g.getpixel((x, y)) for x in range(0, w, max(1, w // 20))
+              for y in (0, h - 1)] + \
+             [g.getpixel((x, y)) for y in range(0, h, max(1, h // 20))
+              for x in (0, w - 1)]
+    bg = sum(border) / max(1, len(border))
+    data = sorted(g.getdata())
+    dark = data[len(data) // 20]
+    return dark < bg - 20
+
+
+def ocr_rapid(img: Image.Image, photo: bool = False):
     """Full-screen friendly: detección + reconocimiento en una pasada.
-    photo=True usa engine sensible + preproceso de contraste (fotos TV/móvil)."""
+    photo=True usa engine sensible + preproceso de contraste (fotos TV/móvil).
+    Devuelve (texto, conf_por_linea) para highlight de sospechosos."""
     eng = get_rapid_photo() if photo else get_rapid()
     if photo:
         img = preprocess_photo(img)
@@ -230,9 +252,18 @@ def ocr_rapid(img: Image.Image, photo: bool = False) -> str:
         arr = _np.array(img.convert("RGB"))
     res, _ = eng(arr)
     if not res:
-        return ""
-    lines = sorted(res, key=lambda b: b[0][0][1])  # top-to-bottom
-    return "\n".join(t for _, t, _ in lines if t).strip()
+        return "", []
+    ordered = sorted(res, key=lambda b: b[0][0][1])  # top-to-bottom
+    texts, confs = [], []
+    for _, t, s in ordered:
+        if not t:
+            continue
+        texts.append(t)
+        try:
+            confs.append(round(float(s if not isinstance(s, (list, tuple)) else s[0]), 3))
+        except Exception:
+            confs.append(None)
+    return "\n".join(texts).strip(), confs
 
 
 @lru_cache(maxsize=2000)
@@ -433,6 +464,7 @@ async def api_ocr(
     be = (backend or OCR_BACKEND).lower()
     psm = psm if psm != 6 else OCR_PSM  # ?psm= explícito gana, si no env
     ocr_by = "pi"
+    line_conf = None
     import time
     t0 = time.time()
     if be == "groq":
@@ -458,14 +490,16 @@ async def api_ocr(
             rimg.save(buf, "JPEG", quality=80)
             try:
                 async with OCR_LOCK:
-                    text = await pc_ocr(buf.getvalue(), photo)
+                    text, line_conf = await pc_ocr(buf.getvalue(), photo)
                 ocr_by = "pc"
             except Exception:
                 ocr_by = "pi"
+        line_conf = None
         if ocr_by == "pi":
             try:
                 async with OCR_LOCK:
-                    text = await asyncio.to_thread(ocr_rapid, rimg, photo)
+                    text, line_conf = await asyncio.to_thread(
+                        ocr_rapid, rimg, photo)
             except ImportError:
                 from fastapi import HTTPException
                 raise HTTPException(501, "modo rapidocr no instalado en la Pi "
@@ -492,6 +526,7 @@ async def api_ocr(
            "ms": ocr_ms + dict_ms,
            "ocr_ms": ocr_ms, "dict_ms": dict_ms,
            "psm": psm if be == "tesseract" else None,
+           "line_conf": line_conf,
            "translation": None}
     global LAST_RESULT
     LAST_RESULT = res
@@ -587,6 +622,40 @@ async def api_translate(text: str = Query(..., min_length=1, max_length=500)):
         from fastapi import HTTPException
         raise HTTPException(501, "traducción no configurada (GROQ_API_KEY)")
     return {"text": text, "translation": t}
+
+
+@app.post("/api/correct")
+async def api_correct(request: Request):
+    """Corrección manual: {text, parent_id?} -> pipeline completo
+    (tokenize + translate) como NUEVA versión (edited:true).
+    Sin cirugía de merge: dictado, furigana e historial quedan consistentes."""
+    from fastapi import HTTPException
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "JSON inválido")
+    check_auth(body.get("key", ""), request)
+    text = (body.get("text") or "").strip()
+    parent = body.get("parent_id")
+    if not text or len(text) > 2000:
+        raise HTTPException(400, "text vacío o >2000 chars")
+    import time as _t
+    t0 = _t.time()
+    toks = await asyncio.to_thread(tokenize, text)
+    dict_ms = int((_t.time() - t0) * 1000)
+    rid = f"{int(_t.time()*1000)}"
+    res = {"id": rid, "text": text, "tokens": toks, "v": gen_version(),
+           "backend": "manual", "ocr_by": "user",
+           "ms": dict_ms, "ocr_ms": 0, "dict_ms": dict_ms,
+           "psm": None, "line_conf": None,
+           "edited": True, "parent": parent, "orig_text": None,
+           "translation": None}
+    global LAST_RESULT
+    LAST_RESULT = res
+    await hub.broadcast(res)
+    readings = {t.get("reading", "") for t in toks if t.get("reading")}
+    asyncio.create_task(_translate_and_push(rid, text, readings))
+    return res
 
 
 @app.post("/api/disparar")
