@@ -584,7 +584,7 @@ async def translate_en(text: str, readings: set | None = None) -> str | None:
     order = ([_TEXT_WINNER] if _TEXT_WINNER else []) + \
         [m for m in GROQ_TEXT_MODELS if m != _TEXT_WINNER]
     for model in order:
-        content = await translate_one(model, text)
+        content, _ = await translate_one(model, text)
         if content:
             _TEXT_WINNER = model
             return content
@@ -599,10 +599,10 @@ async def api_translate(text: str = Query(..., min_length=1, max_length=500),
         if not GROQ_KEY:
             from fastapi import HTTPException
             raise HTTPException(501, "traducción no configurada (GROQ_API_KEY)")
-        t = await translate_one(model.strip(), text)
+        t, reason = await translate_one(model.strip(), text)
         if t is None:
             from fastapi import HTTPException
-            raise HTTPException(502, f"modelo {model} no respondió")
+            raise HTTPException(502, f"modelo {model}: {reason}")
         return {"text": text, "translation": t, "model": model}
     t = await translate_en(text)
     if t is None:
@@ -611,10 +611,13 @@ async def api_translate(text: str = Query(..., min_length=1, max_length=500),
     return {"text": text, "translation": t}
 
 
-async def translate_one(model: str, text: str) -> str | None:
-    """Un intento contra un modelo: contenido no vacío o None."""
+async def translate_one(model: str, text: str):
+    """Un intento contra un modelo: (contenido, motivo) — contenido None si falla.
+    Motivos: no-key | httpXXX | empty | exception. Nunca exception hacia afuera."""
     import httpx
     import sys as _sys
+    if not GROQ_KEY:
+        return None, "no-key"
     try:
         async with httpx.AsyncClient(timeout=15) as h:
             r = await h.post(
@@ -625,15 +628,20 @@ async def translate_one(model: str, text: str) -> str | None:
                       "messages": [{"role": "user", "content":
                           GROQ_TRANSLATE_PROMPT + text}]})
             if r.status_code != 200:
+                reason = f"http{r.status_code}"
                 print(f"translate {model}: HTTP {r.status_code} "
                       f"{r.text[:120]}", flush=True, file=_sys.stderr)
-                return None
+                return None, reason
             content = (r.json()["choices"][0]["message"].get("content")
                        or "").strip()
-            return content or None
+            if not content:
+                print(f"translate {model}: empty content",
+                      flush=True, file=_sys.stderr)
+                return None, "empty"
+            return content, "ok"
     except Exception as e:
         print(f"translate {model}: ERR {e}", flush=True, file=_sys.stderr)
-        return None
+        return None, "exception"
 
 
 @app.post("/api/correct")

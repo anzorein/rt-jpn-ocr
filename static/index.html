@@ -49,6 +49,7 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 <div id="bar"><div id="dot"></div><span id="st">connecting…</span>
 <button id="b-cam" title="Capture on PC">📸</button>
 <button id="b-say" title="Read sentence aloud">🔊</button>
+<button id="b-regen" title="Re-translate with selected MT model">↻</button>
 <button id="b-hist" title="History">🕘</button>
 <button id="b-menu" title="Settings">⚙️</button>
 </div>
@@ -74,6 +75,10 @@ footer{padding:12px;color:#666;font-size:.7rem;text-align:center}
 <div id="edited-tag">✏️ edited by hand</div>
 <div id="trans"></div>
 <div id="trans-model"></div>
+<div id="edbox" style="display:none;position:fixed;left:8px;right:8px;bottom:8px;background:#1e1e1e;border:1px solid #444;border-radius:12px;padding:14px;z-index:20">
+<textarea id="ed-text" rows="5" style="width:100%;background:#111;color:#eee;border:1px solid #444;border-radius:8px;font-size:1.1rem"></textarea>
+<div class="row" style="display:flex;gap:8px;margin-top:8px"><button id="ed-save" style="background:#333;color:#fff;border:0;border-radius:8px;padding:8px 12px">Save</button><button id="ed-cancel" style="background:#333;color:#fff;border:0;border-radius:8px;padding:8px 12px">Cancel</button></div>
+</div>
 <div id="card"><div class="row"><button id="c-say">🔊</button><h2 id="c-w"></h2>
 <button id="c-fav" title="Star (protects from auto-delete)">☆</button>
 <button id="c-edit" title="Edit this word">✏️</button>
@@ -296,21 +301,23 @@ $("c-edit").onclick=()=>{
   }
   postCorrect(parts.join(""),CUR_ENTRY?CUR_ENTRY.id:null,toksToText());
 };
+function openEditor(){
+  const cur=toksToText();if(!cur)return;
+  $("ed-text").value=cur;
+  $("edbox").style.display="block";
+}
+$("ed-cancel").onclick=()=>{$("edbox").style.display="none";};
+$("ed-save").onclick=()=>{
+  const v=$("ed-text").value;const cur=toksToText();
+  $("edbox").style.display="none";
+  if(!v||v===cur)return;
+  postCorrect(v,CUR_ENTRY?CUR_ENTRY.id:null,cur);
+};
 let _lpT=null;
 $("sent").addEventListener("touchstart",()=>{
-  _lpT=setTimeout(()=>{
-    const cur=toksToText();if(!cur)return;
-    const v=prompt("Correct the sentence:",cur);
-    if(v===null||v===cur)return;
-    postCorrect(v,CUR_ENTRY?CUR_ENTRY.id:null,cur);
-  },650);},{passive:true});
+  _lpT=setTimeout(()=>openEditor(),650);},{passive:true});
 $("sent").addEventListener("touchend",()=>clearTimeout(_lpT));
-$("sent").addEventListener("dblclick",()=>{
-  const cur=toksToText();if(!cur)return;
-  const v=prompt("Correct the sentence:",cur);
-  if(v===null||v===cur)return;
-  postCorrect(v,CUR_ENTRY?CUR_ENTRY.id:null,cur);
-});
+$("sent").addEventListener("dblclick",()=>openEditor());
 $("c-x").onclick=()=>$("card").style.display="none";
 $("c-say").onclick=()=>{if(CUR)say(CUR.surface)};
 $("c-fav").onclick=async()=>{
@@ -331,11 +338,9 @@ $("m-key").onclick=()=>{ // key = same API_KEY as the Pi (POSTs only)
 function paintTm(){$("m-tm").textContent="MT: "+(TML[pref.tmodel]||"?");}
 $("m-tm").onclick=()=>{pref.tmodel=TMS[(TMS.indexOf(pref.tmodel)+1)%TMS.length];
   savePref();paintTm();};
-async function regenTranslation(){ // tap on translation = next model + regenerate
+async function regenTranslation(){ // ↻: re-translate with SELECTED model (no cycling)
   const txt=CUR_ENTRY?CUR_ENTRY.text:toksToText();
   if(!txt)return;
-  pref.tmodel=TMS[(TMS.indexOf(pref.tmodel)+1)%TMS.length];
-  savePref();paintTm();
   $("trans-model").textContent="via "+(TML[pref.tmodel]||"?")+"…";
   try{
     const t=await (await fetch(`/api/translate?text=${encodeURIComponent(txt)}&model=${encodeURIComponent(pref.tmodel)}`)).json();
@@ -343,10 +348,10 @@ async function regenTranslation(){ // tap on translation = next model + regenera
       $("trans-model").textContent="via "+(TML[pref.tmodel]||pref.tmodel);
       if(CUR_ENTRY){CUR_ENTRY.translation=t.translation;
         try{await tx("readwrite",s=>s.put(CUR_ENTRY))}catch(e){}}}
-    else{$("trans-model").textContent="model failed, try again";}
-  }catch(e){$("trans-model").textContent="model failed, try again";}
+    else{$("trans-model").textContent="model failed, try another";}
+  }catch(e){$("trans-model").textContent="model failed, try another";}
 }
-$("trans").onclick=()=>regenTranslation();
+$("b-regen").onclick=()=>regenTranslation();
 $("b-menu").onclick=()=>{$("menu").classList.toggle("on");};
 $("b-cam").onclick=()=>{ // 📸 ask the PC to capture (via Pi proxy)
   $("st").textContent="capturing…";
