@@ -47,6 +47,13 @@ GROQ_TRANSLATE_PROMPT = os.getenv("GROQ_TRANSLATE_PROMPT") or (
     "sounds like something a native speaker would say — not word-for-word. "
     "Preserve subtle nuances (e.g. とか marking just one example among "
     "others); do not narrow the meaning. Output only the translation: ")
+GROQ_TEMP_GPTOSS = float(os.getenv("GROQ_TEMP_GPTOSS", "0.6"))
+
+
+def _groq_temp(model: str) -> float:
+    # gpt-oss son modelos de razonamiento: con temperature 0 el contenido
+    # sale vacío en inputs largos. Resto: 0 (determinista).
+    return GROQ_TEMP_GPTOSS if "gpt-oss" in model else 0
 _TEXT_WINNER: str | None = None  # primer modelo que responde 200, se reutiliza
 RTJPN_PC_URL = os.getenv("RTJPN_PC_URL", "http://192.168.10.15:8120/capturar")
 RTJPN_PC_KEY = os.getenv("RTJPN_PC_KEY", "")
@@ -623,7 +630,7 @@ async def translate_one(model: str, text: str):
             r = await h.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {GROQ_KEY}"},
-                json={"model": model, "temperature": 0,
+                json={"model": model, "temperature": _groq_temp(model),
                       "max_tokens": 512,
                       "messages": [{"role": "user", "content":
                           GROQ_TRANSLATE_PROMPT + text}]})
