@@ -21,6 +21,15 @@ Yomitan (palabra + hiragana + significados, **sin romaji**) con audio `ja-JP`
 sintetizado en la tablet (cero carga Pi) e historial IndexedDB offline con
 favoritas, orden y paginación. UI en inglés.
 
+## Corrección manual (cuando el OCR falla un caracter)
+
+- Líneas con confianza <0.85 se subrayan en naranja solas (`line_conf`).
+- ✏️ en la tarjeta = editar palabra; long-press en la oración (doble-click
+  en PC) = editor multilínea (textarea, preserva saltos).
+- `POST /api/correct {text, parent_id?}` re-corre tokenize+translate como
+  nueva versión (`edited:true`, original preservado en `orig_text`).
+- Chips del historial con ✏️; kill-switch `GROQ_CLEAN_INPUT=0` (traducción).
+
 ## Estructura
 
 ```
@@ -68,7 +77,9 @@ curl localhost:8000/api/selftest   # ok=true = base lista
 ## Endpoints (Pi :8000)
 
 - `/` tablet UI · `GET /api/health|last|selftest|parse?text=` · `WS /ws`
-- `POST /api/ocr?backend=&roi=&psm=&keep_furigana=&key=` (multipart `file`)
+- `POST /api/ocr?backend=&roi=&psm=&keep_furigana=&photo=&key=` (multipart `file`)
+- `POST /api/correct` (JSON `{text, parent_id?, key}` → nueva versión editada)
+- `GET /api/translate?text=&model=` (override puntual de modelo MT)
 - `POST /api/disparar?backend=&key=` (botón 📸 → PC)
 
 ## Backends OCR
